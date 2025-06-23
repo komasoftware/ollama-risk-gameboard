@@ -1,0 +1,17 @@
+{
+  "players": [
+    { "id": 0, "name": "Alpha", "territories": [ {"name": "Alaska", "armies": 3} ], "cards": [] },
+    { "id": 1, "name": "Bravo", "territories": [ {"name": "Ontario", "armies": 3} ], "cards": [] },
+    { "id": 2, "name": "Charlie", "territories": [ {"name": "Quebec", "armies": 3} ], "cards": [] },
+    { "id": 3, "name": "Delta", "territories": [ {"name": "Greenland", "armies": 3} ], "cards": [] }
+  ],
+  "territories": [
+    { "name": "Alaska", "continent": "North America", "adjacent_territories": ["Ontario"] },
+    { "name": "Ontario", "continent": "North America", "adjacent_territories": ["Alaska", "Quebec"] },
+    { "name": "Quebec", "continent": "North America", "adjacent_territories": ["Ontario", "Greenland"] },
+    { "name": "Greenland", "continent": "North America", "adjacent_territories": ["Quebec"] }
+  ],
+  "continents": [
+    { "name": "North America", "bonus_armies": 5, "territories": ["Alaska", "Ontario", "Quebec", "Greenland"] }
+  ]
+} 

@@ -1,0 +1,298 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# AI Agents Playing Risk - Cursor Development Rules
+
+## 📜 Project Overview
+
+This project focuses exclusively on developing AI agents that play the classic board game Risk against each other. The following components are **external dependencies** and are not to be modified:
+- **Risk API Server**: Rust-based REST API running on port 8000 (cloned from https://github.com/Krilecy/risk-board_game-server)
+- **Risk UI**: React-based frontend for visualization (cloned from https://github.com/Krilecy/risk-ui)
+
+The only code to be developed and maintained in this repository is the AI agent logic and orchestration.
+
+## 🎯 Core Goals
+
+1. **AI Agent Development**: Create intelligent agents that can play Risk autonomously by interacting with the Risk API
+2. **Function Calling Integration**: Use Ollama (with function calling) to allow agents to make API calls to the Risk server
+3. **Multi-Agent Competition**: Enable multiple AI agents to play against each other
+4. **Strategic Gameplay**: Develop agents with different strategies and personalities
+5. **Observable Gameplay**: Use the existing UI to visualize AI agent games (no changes to UI code)
+
+## 🏗️ Project Architecture
+
+### Directory Structure
+```
+risk/
+├── agents/                    # AI agent implementations and orchestration
+├── risk-board_game-server/    # Risk API server (external, unchanged)
+├── Risk-UI/                   # React frontend (external, unchanged)
+```
+
+### Key Components (in this repo)
+
+1. **Agent Framework**: Base classes and logic for AI agents
+2. **Strategy System**: Pluggable strategies for different playing styles
+3. **Game Orchestrator**: Manages multi-agent games and turn flow
+4. **Ollama Integration**: Function calling definitions for Risk API
+
+## 🤖 AI Agent Design Principles
+
+- **Modular Design**: Separate strategy, personality, and decision-making logic
+- **Function Calling**: Use Ollama's function calling for API interactions
+- **State Awareness**: Agents maintain awareness of game state and history
+- **Strategy Patterns**: Implement different strategic approaches (aggressive, defensive, opportunistic)
+
+## 🔧 Technical Requirements
+
+- **Language**: Python (better Ollama integration, official client support)
+- **Ollama Model**: Use a model that supports function calling (e.g., llama3.2)
+- **Function Definitions**: Define clear function schemas for Risk API calls
+- **Error Handling**: Robust error handling for API failures and model responses
+- **Performance**: Optimize for reasonable response times during gameplay
+
+## 📋 Development Guidelines
+
+- **Separation of Concerns**: Keep agent logic and orchestration separate
+- **Testable Design**: Write unit tests for agent strategies and decision logic
+- **Documentation**: Document agent strategies and decision-making processes
+- **Type Hints**: Use Python type hints for better code clarity
+
+## 🧪 Testing Strategy
+
+- **Agent Strategies**: Test individual strategy components
+- **API Integration**: Mock API calls for testing
+- **Decision Logic**: Test agent decision-making with known game states
+- **Full Game Simulation**: Test complete games between agents
+
+## 🔒 Security & Best Practices
+
+- **Input Validation**: Validate all agent inputs before API calls
+- **Error Handling**: Graceful handling of API errors and timeouts
+- **Type Hints**: Use Python type hints for better code clarity
+- **Logging**: Comprehensive logging for debugging and analysis
+
+## 📚 Documentation Requirements
+
+- **Agent Strategies**: Document each strategy's approach and reasoning
+- **API Integration**: Document function calling patterns and error handling
+- **Setup Guide**: Clear setup instructions for the agent system
+
+## 🎮 Game Features to Implement
+
+- **Complete Risk Rules**: Full implementation of Risk game mechanics (via API)
+- **Multi-Player Support**: Support for 2-6 AI agents
+- **Turn Management**: Proper turn order and phase management
+- **Victory Conditions**: Proper win condition detection
+- **Tournament Mode**: Automated tournaments between agents
+- **Strategy Analysis**: Post-game analysis of agent decisions
+
+## 🔄 Iteration & Improvement
+
+- **Strategy Refinement**: Regular updates to agent strategies based on performance
+- **Performance Optimization**: Ongoing optimization of response times and efficiency
+- **Feature Addition**: Gradual addition of advanced agent features
+
+## 📋 TODO: Missing Game Elements
+
+### 🔴 High Priority TODOs
+
+#### 1. Card System Implementation
+- **TODO**: Implement card tracking and management
+  - Add card information to game state parsing
+  - Create function calling for `trade_cards` endpoint
+  - Implement card trading logic in agents
+  - Add card-based victory condition tracking (e.g., "conquer Africa")
+  - Update agents to consider card objectives in strategy
+
+#### 2. New Game Creation
+- **TODO**: Implement new game creation functionality
+  - Add function calling for `/new-game` endpoint
+  - Create game configuration options (number of players, map settings)
+  - Implement dynamic player assignment
+  - Add support for different game modes
+
+#### 3. Complete Game Phase Management
+- **TODO**: Implement all game phases properly
+  - **Reinforce Phase**: ✅ Implemented (basic)
+  - **Attack Phase**: ✅ Implemented (basic)
+  - **Fortify Phase**: ⚠️ Partially implemented - needs improvement
+  - **Card Trading**: ❌ Not implemented
+  - **Phase Advancement**: ⚠️ Basic implementation needs enhancement
+
+#### 4. Advanced Movement and Combat
+- **TODO**: Implement advanced game mechanics
+  - **Bulk Reinforce**: Add support for `/bulk_reinforce` endpoint
+  - **Move Armies**: Implement `/move_armies` after successful attacks
+  - **Territory Connections**: Proper fortification logic based on territory adjacency
+  - **Combat Resolution**: Enhanced attack probability calculations
+
+### 🟡 Medium Priority TODOs
+
+#### 5. Enhanced Agent Strategies
+- **TODO**: Improve agent decision-making
+  - **Card-Based Strategy**: Agents should consider their card objectives
+  - **Territory Control**: Better understanding of territory value and connections
+  - **Risk Assessment**: More sophisticated attack/defense calculations
+  - **Long-term Planning**: Multi-turn strategic planning
+
+#### 6. Game State Analysis
+- **TODO**: Better game state understanding
+  - **Territory Analysis**: Calculate territory values and strategic importance
+  - **Player Position Analysis**: Understand relative player strengths
+  - **Victory Probability**: Calculate win probabilities based on current state
+  - **Resource Optimization**: Better army placement and card trading
+
+#### 7. Multi-Game Management
+- **TODO**: Enhanced tournament and game management
+  - **Dynamic Game Creation**: Create new games with different configurations
+  - **Player Rotation**: Rotate agents between games
+  - **Statistics Tracking**: Track performance across multiple games
+  - **Tournament Brackets**: Implement proper tournament structures
+
+### 🟢 Low Priority TODOs
+
+#### 8. Advanced Features
+- **TODO**: Future enhancements
+  - **Learning from Games**: Agents learn from previous game outcomes
+  - **Strategy Evolution**: Agents adapt strategies based on opponent behavior
+  - **Custom Maps**: Support for different Risk map configurations
+  - **Replay Analysis**: Detailed analysis of game replays
+
+#### 9. Performance and Monitoring
+- **TODO**: System improvements
+  - **Response Time Optimization**: Faster agent decision-making
+  - **Memory Management**: Better memory usage for long games
+  - **Error Recovery**: More robust error handling and recovery
+  - **Analytics Dashboard**: Real-time game monitoring
+
+## 🎯 Current Implementation Status
+
+### ✅ Implemented Features
+- Basic Risk API client with function calling
+- Ollama integration with llama3.2 model
+- Base agent framework with strategy patterns
+- Simple, aggressive, and defensive agent strategies
+- Game orchestration and tournament management
+- Basic reinforce and attack functionality
+- Game state parsing and analysis
+- Error handling and timeout management
+
+### ⚠️ Partially Implemented Features
+- Fortify phase (basic implementation)
+- Phase advancement (basic implementation)
+- Game state analysis (basic territory understanding)
+
+### ❌ Missing Features
+- Card system and trading
+- New game creation with configuration
+- Bulk reinforce functionality
+- Move armies after attacks
+- Card-based victory conditions
+- Advanced strategic planning
+- Multi-game statistics tracking
+
+## 🔧 Development Priorities
+
+### Immediate Next Steps
+1. **Implement card system** - Add card tracking and trading functionality
+2. **Add new game creation** - Enable dynamic game setup with different configurations
+3. **Enhance fortify phase** - Improve territory movement logic
+4. **Add bulk reinforce** - Implement efficient army placement
+
+### Short-term Goals
+1. **Card-based strategies** - Agents consider their card objectives
+2. **Advanced game analysis** - Better territory and position evaluation
+3. **Enhanced error handling** - More robust API interaction
+4. **Performance optimization** - Faster agent decision-making
+
+### Long-term Vision
+1. **Learning agents** - Agents that improve from game experience
+2. **Advanced tournaments** - Sophisticated tournament structures
+3. **Custom configurations** - Support for different game modes
+4. **Analytics platform** - Comprehensive game analysis tools
+
+## 🧑‍🤝‍🧑 Custom Player Names
+
+- You can set custom player names by providing a custom game configuration file (JSON) and passing its path to the `/new-game` endpoint using the `config_file` parameter.
+- The config file must define the `players` array, and each player object must have a `name` field.
+- Example config snippet:
+
+```json
+{
+  "players": [
+    { "id": 0, "name": "Alice", ... },
+    { "id": 1, "name": "Bob", ... }
+  ],
+  ...
+}
+```
+
+- To start a game with these names, POST to `/new-game`:
+
+```bash
+curl -X POST http://localhost:8000/new-game \
+  -H "Content-Type: application/json" \
+  -d '{"config_file": "your_custom_config.json"}'
+```
+
+- The config file must be accessible to the server (in its working directory).
+- **You cannot set player names directly via a parameter in the `/new-game` JSON payload.**
+
+## 🃏 Card System in Risk
+
+### **Card Types:**
+- **Infantry** (♠️)
+- **Cavalry** (♣️) 
+- **Artillery** (♥️)
+- **Joker** (🃏) - Can substitute for any card type
+
+### **Getting Cards:**
+- **You only get cards by conquering territories**
+- At the end of your turn, if you conquered at least one territory, you automatically receive one card from the deck
+- **No cards are given at game start**
+
+### **Trading Cards for Armies:**
+Cards are primarily used to trade for additional reinforcement armies during the **Reinforce Phase**.
+
+**Valid Trading Combinations:**
+1. **Three of a Kind:**
+   - 3 Infantry = 4 armies
+   - 3 Cavalry = 6 armies  
+   - 3 Artillery = 8 armies
+
+2. **One of Each:**
+   - 1 Infantry + 1 Cavalry + 1 Artillery = 10 armies
+
+3. **With Jokers:**
+   - Jokers can substitute for any card type
+   - Any valid 3-card combination with jokers = 10 armies
+
+### **Territory Bonus:**
+When you trade cards, if one of the traded cards matches a territory you own, you get **+2 bonus armies** automatically placed on that territory.
+
+### **Trading Rules:**
+- Must trade exactly 3 cards
+- Can only trade during the Reinforce Phase
+- Cards are discarded after trading
+- You can trade multiple times per turn if you have enough cards
+
+### **Victory Condition:**
+- **This implementation uses the classic Risk victory condition**: Control all territories on the board
+- **No card-based missions** (like "Conquer Africa" or "Eliminate Red Player")
+- The only way to win is to eliminate all other players
+
+### **API Usage:**
+```bash
+# Trade cards for armies
+curl -X POST http://localhost:8000/trade_cards \
+  -H "Content-Type: application/json" \
+  -d '{"player_id": 0, "card_indices": [0, 1, 2]}'
+```
+
+### **Key Differences from Classic Risk:**
+- **No secret missions** - only territory control victory
+- **No wild cards** - just jokers that substitute for any type
+- **Simplified card system** - focused on army trading rather than objectives 
