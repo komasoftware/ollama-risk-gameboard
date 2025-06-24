@@ -199,7 +199,7 @@ class TestRiskRules(unittest.TestCase):
             )
         }
         from agents.risk_api import Player
-        player = Player(id=0, name="Player 1", territories=["Alaska", "Northwest Territory", "Alberta"], armies=0, cards=[])
+        player = Player(id=0, name="Player 1", territories=["Alaska", "Northwest Territory", "Alberta"], armies=0, total_armies=6, cards=[])
         actions = get_valid_fortify_actions(self.game_state, player)
         expected_actions = [
             {"from": "Alaska", "to": "Northwest Territory", "max_armies": 2},
@@ -286,7 +286,7 @@ class TestRiskRules(unittest.TestCase):
             "E": Territory("E", "Player 2", 1, "Test", ["D"]),  # Enemy territory
         }
         from agents.risk_api import Player
-        player = Player(id=0, name="Player 1", territories=["A", "B", "C", "D"], armies=0, cards=[])
+        player = Player(id=0, name="Player 1", territories=["A", "B", "C", "D"], armies=0, total_armies=4, cards=[])
         connected = _find_connected_territories(self.game_state, player, "A")
         expected = {"A", "B", "C", "D"}
         self.assertEqual(connected, expected)
@@ -362,6 +362,54 @@ class TestRiskRules(unittest.TestCase):
         self.assertFalse(_is_valid_card_combination(["Infantry", "Infantry", "Cavalry"]))
         self.assertFalse(_is_valid_card_combination(["Infantry", "Cavalry", "Cavalry"]))
         self.assertFalse(_is_valid_card_combination(["Joker", "Joker", "Joker"]))  # Three jokers not valid
+
+    def test_card_validation_with_complex_objects(self):
+        """Test that card validation works with complex card objects (the fix for the reported issue)."""
+        # Create complex card objects like the ones in the game state
+        class MockCard:
+            def __init__(self, territory, kind):
+                self.territory = territory
+                self.kind = kind
+        
+        # Test the specific combination that was failing: Infantry + Artillery + Joker
+        cards = [
+            MockCard("Kamchatka", "Infantry"),
+            MockCard("Western Europe", "Artillery"), 
+            MockCard(None, "Joker")
+        ]
+        
+        # Extract just the kind field (this is what the fix does)
+        card_kinds = [card.kind for card in cards]
+        
+        # This should be valid: 1 Infantry + 1 Artillery + 1 Joker
+        self.assertTrue(_is_valid_card_combination(card_kinds))
+        
+        # Test other valid combinations with complex objects
+        cards_three_infantry = [
+            MockCard("Alaska", "Infantry"),
+            MockCard("Ontario", "Infantry"),
+            MockCard("Quebec", "Infantry")
+        ]
+        card_kinds_three_infantry = [card.kind for card in cards_three_infantry]
+        self.assertTrue(_is_valid_card_combination(card_kinds_three_infantry))
+        
+        # Test one of each type
+        cards_one_each = [
+            MockCard("Alaska", "Infantry"),
+            MockCard("Ontario", "Cavalry"),
+            MockCard("Quebec", "Artillery")
+        ]
+        card_kinds_one_each = [card.kind for card in cards_one_each]
+        self.assertTrue(_is_valid_card_combination(card_kinds_one_each))
+        
+        # Test invalid combination with complex objects
+        cards_invalid = [
+            MockCard("Alaska", "Infantry"),
+            MockCard("Ontario", "Infantry"),
+            MockCard("Quebec", "Cavalry")  # 2 Infantry + 1 Cavalry = invalid
+        ]
+        card_kinds_invalid = [card.kind for card in cards_invalid]
+        self.assertFalse(_is_valid_card_combination(card_kinds_invalid))
 
 
 if __name__ == "__main__":

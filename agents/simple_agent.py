@@ -5,12 +5,113 @@ A basic agent that uses direct implementation without base class inheritance.
 
 from .risk_api import GameState, GamePhase, RiskAPIClient
 from .ollama_client import OllamaAgentClient
-from .risk_rules import get_valid_reinforce_actions, get_valid_attack_actions, get_valid_fortify_actions, get_valid_move_armies_actions
+from .risk_rules import get_valid_reinforce_actions, get_valid_attack_actions, get_valid_fortify_actions, get_valid_move_armies_actions, get_valid_card_trade_actions
 
 
 class SimpleAgent:
     """A simple agent with a configurable strategy (balanced, aggressive, defensive)."""
     
+    EXAMPLES = (
+        """You are playing Risk. Use the function calling mechanism to make your moves.
+
+Example 1 (Reinforce Phase):
+Reasoning:
+1. Ontario is a central territory in North America, allowing expansion and defense.
+2. Reinforcing Great Britain protects my European foothold and threatens attacks.
+3. I have 5 reinforcement armies to place.
+Action:
+Use the reinforce function with all required parameters:
+- player_id: 0
+- territory: "Ontario"
+- num_armies: 3
+
+Use the reinforce function again:
+- player_id: 0
+- territory: "Great Britain"
+- num_armies: 2
+
+Example 2 (Card Trading in Reinforce Phase):
+Reasoning:
+1. I have 3 Infantry cards that I can trade for 4 bonus armies.
+2. Card trading is only available during REINFORCE phase.
+3. I must trade exactly 3 cards using the trade_cards function.
+Action:
+Use the trade_cards function with the correct parameters:
+- player_id: 0
+- card_indices: [0, 1, 2]
+
+Example 3 (Card Trading - One of Each Type):
+Reasoning:
+1. I have 1 Infantry, 1 Cavalry, and 1 Artillery card.
+2. This combination gives me 10 bonus armies (the maximum).
+3. I should trade these cards for maximum benefit.
+Action:
+Use the trade_cards function with all required parameters:
+- player_id: 0
+- card_indices: [0, 1, 2]
+
+Example 4 (Card Trading with Jokers):
+Reasoning:
+1. I have 1 Infantry and 2 Joker cards.
+2. Jokers can substitute for any card type.
+3. This combination is valid and gives me 10 bonus armies.
+Action:
+Use the trade_cards function with all required parameters:
+- player_id: 0
+- card_indices: [0, 1, 2]
+
+Example 5 (Attack Phase):
+Reasoning:
+1. I want to attack from Alaska to Northwest Territory.
+2. I have 4 armies in Alaska, so I can attack with 1-3 armies.
+3. I must use the attack function with all required parameters.
+Action:
+Use the attack function:
+- player_id: 0
+- from_territory: "Alaska"
+- to_territory: "Northwest Territory"
+- num_armies: 2
+- num_dice: 2
+- repeat: false
+
+Example 6 (Move Armies Phase):
+Reasoning:
+1. I successfully conquered Northwest Territory and need to move armies there.
+2. I should move 2 armies to secure the newly conquered territory.
+3. This will leave 1 army in the attacking territory as required.
+Action:
+Use the move_armies function with all required parameters:
+- player_id: 0
+- from_territory: "Alberta"
+- to_territory: "Northwest Territory"
+- num_armies: 2
+
+Example 7 (Fortify Phase):
+Reasoning:
+1. I want to move armies from Quebec to Ontario.
+2. I have 3 armies in Quebec, so I can move 1-2 armies.
+3. I must use the fortify function with all required parameters.
+Action:
+Use the fortify function:
+- player_id: 0
+- from_territory: "Quebec"
+- to_territory: "Ontario"
+- num_armies: 1
+
+CARD TRADING RULES:
+- You can ONLY trade cards during REINFORCE phase
+- You MUST trade exactly 3 cards at a time
+- Valid combinations: 3 of same type OR 1 of each type (Infantry, Cavalry, Artillery)
+- Jokers can substitute for any card type
+- 3 of a kind: Infantry=4 armies, Cavalry=6 armies, Artillery=8 armies
+- 1 of each type: 10 armies (maximum)
+- Use card_indices parameter with exactly 3 integers (0-based indexing)
+
+IMPORTANT: Always use the function calling mechanism. DO NOT write function calls as text strings.
+Always include ALL required parameters for each function.
+"""
+    )
+
     def __init__(self, name: str, model: str = "llama3.2", strategy: str = "balanced"):
         self.name = name
         self.model = model
@@ -51,7 +152,7 @@ class SimpleAgent:
         })
 
     def _create_prompt(self, game_state: GameState) -> str:
-        """Create a detailed, phase-specific prompt for the AI."""
+        """Create a simplified, phase-specific prompt focused on function calling."""
         my_player = game_state.players.get(self.name)
         if not my_player:
             return "Error: Could not find myself in the game state."
@@ -59,192 +160,385 @@ class SimpleAgent:
         player_id = my_player.id
         phase = game_state.phase
         
+        # Build the prompt
+        prompt = f"You are {self.name} playing Risk. You MUST use Ollama's function calling mechanism.\n\n"
+        
+        # Add explicit function calling instruction
+        prompt += "🔥 CRITICAL: You MUST use the function calling mechanism. DO NOT write function calls as text strings. 🔥\n\n"
+        
+        prompt += f"CURRENT PHASE: {phase.value}\n"
+        prompt += f"PLAYER ID: {my_player.id}\n\n"
+        
         if phase == GamePhase.REINFORCE:
-            # --- Continent analysis ---
-            board = getattr(game_state, 'board', None)
-            continents_info = None
-            if board is None and hasattr(game_state, '_raw_state'):
-                board = game_state._raw_state.get('board', {})
-            if board is None:
-                # Try to get from global state (for testability)
-                import sys
-                if 'game' in sys.modules:
-                    board = getattr(sys.modules['game'], 'board', None)
-            continents_info = None
-            if board is None and hasattr(game_state, 'continents'):
-                continents_info = game_state.continents
-            else:
-                continents_info = board.get('continents', {}) if board else {}
-
-            # --- Continent bonus section ---
-            if continents_info:
-                prompt = "--- Continent Bonuses ---\n"
-                for cname, cdata in continents_info.items():
-                    prompt += f"- {cname}: {cdata.get('bonus_armies', 0)} armies\n"
-                prompt += "-------------------------\n"
-            else:
-                prompt = ""
-
-            # Build continent/territory mapping
-            owned_territories = set(my_player.territories)
-            controlled = []
-            nearly_controlled = []
-            if hasattr(game_state, 'continents') and game_state.continents:
-                for cname, cdata in game_state.continents.items():
-                    terrs = set(cdata['territories'])
-                    owned = len(owned_territories & terrs)
-                    total = len(terrs)
-                    if owned == total:
-                        controlled.append((cname, cdata.get('bonus_armies', 0)))
-                    elif owned >= total - 1:
-                        missing = list(terrs - owned_territories)
-                        nearly_controlled.append((cname, owned, total, missing))
-
-            if controlled:
-                prompt += "\nYou fully control the following continents and receive bonus armies each turn:\n"
-                for cname, bonus in controlled:
-                    prompt += f"- {cname} (bonus: {bonus} armies)\n"
-                prompt += "Consider defending the borders of these continents to keep your bonus.\n"
-            if nearly_controlled:
-                prompt += "\nYou are close to controlling these continents:\n"
-                for cname, owned, total, missing in nearly_controlled:
-                    missing_str = ', '.join(missing)
-                    prompt += f"- {cname}: you own {owned}/{total} territories (missing: {missing_str})\n"
-                prompt += "Consider focusing your reinforcements or attacks to complete these continents for a bonus.\n"
-            if not controlled and not nearly_controlled:
-                prompt += "\nYou do not currently control or nearly control any continent. Consider focusing your efforts on capturing all territories in a continent to receive bonus armies each turn.\n"
-
-            # --- List valid reinforce actions ---
-            valid_reinforce = get_valid_reinforce_actions(game_state, my_player, self.risk_client)
-            valid_territories = [action['territory'] for action in valid_reinforce]
-            prompt += "\n--- VALID REINFORCE ACTIONS ---\n"
-            if valid_reinforce:
-                for action in valid_reinforce:
-                    prompt += f"- {action['territory']}: up to {action['max_armies']} armies\n"
-                prompt += f"\nVALID TERRITORY NAMES: [{', '.join(valid_territories)}]\n"
-                prompt += "You MUST use exactly one of the above territory names for each reinforce function call. Do NOT invent, modify, or misspell names. If you use an invalid name, your action will be ignored and replaced with a valid one.\n"
-            else:
-                prompt += "(No valid reinforce actions available.)\n"
-            prompt += "-------------------------------\n\n"
-
-            # Get fresh reinforcement armies from server for the prompt
-            reinforcement_armies = self.risk_client.get_reinforcement_armies()
-            prompt += f"It's your turn in the REINFORCE phase. Your player ID is {player_id}. You MUST include this ID in every function call.\n"
-            prompt += f"You have {reinforcement_armies} armies to place.\n"
-            prompt += "You MUST use the reinforce function to place armies. Only function calls will be executed. Do NOT output text instructions.\n"
-            prompt += "CRITICAL: When calling the reinforce function, you MUST provide a valid territory name from the list above. Never use empty strings or None for the territory parameter.\n"
-            prompt += "Place ALL your armies using multiple reinforce function calls. The phase will advance automatically when you have no more armies to place.\n"
+            prompt += self._create_simple_reinforce_prompt(game_state)
         elif phase == GamePhase.ATTACK:
-            prompt = f"It's your turn in the ATTACK phase. Your player ID is {player_id}. You MUST include this ID in every function call.\n"
-            prompt += f"You are Player {self.name} with a {self.strategy} strategy.\n"
-            prompt += f"You own {len(my_player.territories)} territories: {', '.join(my_player.territories)}\n"
-            prompt += "🎯 ATTACK PHASE - BE AGGRESSIVE! 🎯\n"
-            prompt += "🔥 YOUR GOAL: ANNIHILATE ALL ENEMIES! 🔥\n"
-            prompt += "You should attack enemy territories to expand your empire and eliminate opponents.\n"
-            prompt += "💎 BONUS: You earn a card every time you conquer a territory!\n"
-            prompt += "Look for territories with fewer defending armies than your attacking armies.\n"
-            prompt += "You can attack multiple times. Use the `attack` function for each attack.\n"
-            prompt += "For each attack, you MUST choose how many dice to roll. The allowed number of dice is 1, 2, or 3, but you cannot roll more dice than you have armies in the attacking territory minus one.\n"
-            prompt += "When you are finished attacking (or if you choose not to attack), the phase will advance automatically.\n"
-            prompt += "\nCRITICAL: You MUST choose your attack ONLY from the list of valid attack actions below. Do NOT invent, guess, or modify territory names or attack parameters. If you attempt an invalid attack, your action will be ignored and your turn may be skipped.\n"
-            prompt += "\n--- Your territories and armies ---\n"
-            for t in my_player.territories:
-                territory_data = game_state.territories.get(t)
-                armies = territory_data.armies if territory_data else '?'
-                prompt += f"- {t}: {armies} armies\n"
-            prompt += "-----------------------------------\n"
-            
-            # --- List valid attack actions ---
-            valid_attacks = get_valid_attack_actions(game_state, my_player)
-            prompt += "\n--- VALID ATTACK ACTIONS ---\n"
-            if valid_attacks:
-                for action in valid_attacks:
-                    from_terr = action['from']
-                    to_terr = action['to']
-                    max_dice = action['max_dice']
-                    
-                    # Find success probability for this attack
-                    success_prob = "Unknown"
-                    for prob_data in game_state.conquer_probs:
-                        if len(prob_data) >= 3 and prob_data[0] == from_terr and prob_data[1] == to_terr:
-                            success_prob = f"{prob_data[2]*100:.1f}%"
-                            break
-                    
-                    prompt += f"- {from_terr} -> {to_terr}: up to {max_dice} dice (Success: {success_prob})\n"
-                prompt += f"\nVALID ATTACK TERRITORIES: from_territory=[{', '.join(set(action['from'] for action in valid_attacks))}], to_territory=[{', '.join(set(action['to'] for action in valid_attacks))}]\n"
-                prompt += "You MUST use exactly one of the above from_territory and to_territory names for each attack function call. Do NOT invent, modify, or misspell names. If you use an invalid name, your action will be ignored.\n"
-                prompt += "CRITICAL: When calling the attack function, you MUST provide valid from_territory and to_territory names from the list above. Never use empty strings or None for territory parameters.\n"
-            else:
-                prompt += "(No valid attacks available this turn.)\n"
-            prompt += "-------------------------------\n\n"
-            
-            prompt += "You MUST use the attack function to make attacks. Only function calls will be executed. Do NOT output text instructions.\n"
-            prompt += "For each attack you want to make, call the attack function with the exact from_territory and to_territory names from the list above.\n"
-            prompt += "You can make multiple attacks in one turn. After each attack, you can choose to continue attacking or stop.\n"
-            prompt += "When you are done attacking (or if you choose not to attack), the phase will advance automatically.\n"
-            
-            prompt += "\n💡 ATTACK STRATEGY:\n"
-            prompt += "- Attack when you have more armies than the defender\n"
-            prompt += "- Focus on attacks with high success probabilities (80%+ is excellent)\n"
-            prompt += "- Prioritize attacks with 90%+ success rate for maximum efficiency\n"
-            prompt += "- Focus on weak enemy positions\n"
-            prompt += "- Try to capture territories to expand your empire\n"
-            prompt += "- Don't be afraid to take calculated risks!\n"
-            prompt += "- Every conquered territory gives you a card for future reinforcements!\n"
-            prompt += "- Remember: You must eliminate ALL enemies to win!\n"
-            prompt += "\nIf no valid attacks are listed, the phase will advance automatically. Otherwise, use the attack function for each attack you want to make.\n"
+            prompt += self._create_simple_attack_prompt(game_state)
         elif phase == GamePhase.FORTIFY:
-            valid_fortifies = get_valid_fortify_actions(game_state, my_player)
-            prompt = f"It's your turn in the FORTIFY phase. Your player ID is {player_id}. You MUST include this ID in every function call.\n"
-            prompt += f"You may move armies between two of your connected territories (a single move).\n"
-            prompt += "You MUST use the fortify function to move armies. Only function calls will be executed. Do NOT output text instructions.\n"
-            prompt += "The phase will advance automatically when you have no more valid fortify actions.\n"
-            prompt += "\n--- VALID FORTIFY MOVES ---\n"
-            if valid_fortifies:
-                for action in valid_fortifies:
-                    from_terr = action['from']
-                    to_terr = action['to']
-                    max_armies = action['max_armies']
-                    prompt += f"- {from_terr} -> {to_terr}: up to {max_armies} armies\n"
-                prompt += f"\nVALID FORTIFY MOVES: from_territory=[{', '.join(set(a['from'] for a in valid_fortifies))}], to_territory=[{', '.join(set(a['to'] for a in valid_fortifies))}]\n"
-                prompt += "You MUST use exactly one of the above from_territory and to_territory names for each fortify function call. Do NOT invent, modify, or misspell names. If you use an invalid name, your action will be ignored.\n"
-                prompt += "CRITICAL: When calling the fortify function, you MUST provide valid from_territory and to_territory names from the list above. Never use empty strings or None for territory parameters.\n"
-                prompt += "You can make one fortify move per turn. After making a move (or if you choose not to move), the phase will advance automatically.\n"
-            else:
-                prompt += "(No valid fortify moves available this turn.)\n"
-            prompt += "-------------------------------\n\n"
-            prompt += "If no valid fortify moves are listed, the phase will advance automatically. Otherwise, use the fortify function for your move.\n"
+            prompt += self._create_simple_fortify_prompt(game_state)
         elif phase == GamePhase.MOVE_ARMIES:
-            prompt = f"It's your turn in the MOVE ARMIES phase. Your player ID is {player_id}. You MUST include this ID in every function call.\n"
-            prompt += f"You have successfully conquered a territory and must now move some of your attacking armies into the newly conquered territory.\n"
-            prompt += "You MUST use the move_armies function to move armies. Only function calls will be executed. Do NOT output text instructions.\n"
-            prompt += "The server will tell you the valid move options including the minimum and maximum armies you can move.\n"
-            prompt += "After moving armies, the phase will advance automatically.\n"
-            
-            # --- List valid move armies actions ---
-            valid_moves = get_valid_move_armies_actions(game_state, my_player)
-            prompt += "\n--- VALID MOVE ARMIES ACTIONS ---\n"
-            if valid_moves:
-                for action in valid_moves:
-                    from_terr = action['from']
-                    to_terr = action['to']
-                    min_armies = action['min_armies']
-                    max_armies = action['max_armies']
-                    prompt += f"- {from_terr} -> {to_terr}: {min_armies} to {max_armies} armies\n"
-                prompt += f"\nVALID MOVE ARMIES: from_territory=[{', '.join(set(action['from'] for action in valid_moves))}], to_territory=[{', '.join(set(action['to'] for action in valid_moves))}]\n"
-                prompt += "You MUST use exactly one of the above from_territory and to_territory names for each move_armies function call. Do NOT invent, modify, or misspell names. If you use an invalid name, your action will be ignored.\n"
-                prompt += "CRITICAL: When calling the move_armies function, you MUST provide valid from_territory and to_territory names from the list above. Never use empty strings or None for territory parameters.\n"
-            else:
-                prompt += "(No valid move armies actions available.)\n"
-            prompt += "-------------------------------\n\n"
-            
-            prompt += "\n💡 MOVE ARMIES STRATEGY:\n"
-            prompt += "- Move enough armies to defend your newly conquered territory\n"
-            prompt += "- Keep enough armies in your attacking territory to defend it\n"
-            prompt += "- Consider the strategic value of both territories\n"
-            prompt += "- The server will enforce the minimum and maximum army limits\n"
-            prompt += "\nUse the move_armies function with the exact from_territory and to_territory names provided by the server.\n"
+            prompt += self._create_simple_move_armies_prompt(game_state)
 
+        # Add critical instructions
+        prompt += f"""
+
+STRATEGIC GUIDANCE:
+- Reinforce border territories that are adjacent to enemy territories
+- Consider continent bonuses when placing armies - control entire continents for bonus armies
+- Attack from territories with more armies to territories with fewer armies
+- Target weak enemy positions and try to eliminate players
+- Protect your continent bonuses by defending key territories
+- Prioritize continents with higher bonuses: Asia (+7), North America/Europe (+5), Africa (+3), South America/Australia (+2)
+- Card trading is ONLY available during REINFORCE phase
+- Card trading gives bonus armies: 3 of a kind = 4-8 armies, 1 of each = 10 armies
+
+CRITICAL INSTRUCTIONS:
+1. Use ONLY the function calling mechanism provided by Ollama
+2. DO NOT write function calls as text strings
+3. DO NOT provide lengthy reasoning or explanations
+4. Make direct function calls with ALL required parameters
+5. Focus on the action, not the explanation
+6. If you have valid actions available, make them immediately
+7. DO NOT ask questions or wait for confirmation
+
+Choose your action now using the function calling mechanism."""
+
+        return prompt
+
+    def _create_simple_reinforce_prompt(self, game_state: GameState) -> str:
+        """Create a simplified reinforce prompt focused on function calling."""
+        my_player = game_state.players.get(self.name)
+        if not my_player:
+            return "Error: Could not find myself in the game state."
+
+        player_id = my_player.id
+        
+        prompt = f"REINFORCE PHASE: Choose actions from the list below.\n"
+        prompt += f"Your territories: {', '.join(my_player.territories)}\n"
+        prompt += f"Your armies to place: {my_player.armies}\n"
+        prompt += f"Your cards: {my_player.cards} (count: {len(my_player.cards)})\n\n"
+        
+        # IMPORTANT: Only reinforce and trade_cards functions are allowed in this phase
+        prompt += "PHASE RESTRICTIONS:\n"
+        prompt += "- ONLY reinforce and trade_cards functions are allowed in REINFORCE phase\n"
+        prompt += "- DO NOT use attack, fortify, or move_armies functions\n"
+        prompt += "- You can reinforce multiple times\n"
+        prompt += "- You can trade cards multiple times (if you have enough cards)\n\n"
+        
+        # Add comprehensive board state information
+        # NOTE: Using fresh game_state to ensure enemy positions are current
+        prompt += "BOARD STATE:\n"
+        for player_name, player_data in game_state.players.items():
+            if player_name != self.name:  # Show enemy information
+                prompt += f"ENEMY {player_name} (ID {player_data.id}):\n"
+                prompt += f"  Territories: {', '.join(player_data.territories)}\n"
+                prompt += f"  Total armies: {player_data.total_armies}\n"
+                # Show army distribution for key territories (from fresh game state)
+                border_territories = []
+                for territory in player_data.territories:
+                    if territory in game_state.territories:
+                        territory_data = game_state.territories[territory]
+                        adjacent_to_mine = any(adj in my_player.territories for adj in territory_data.adjacent_territories)
+                        if adjacent_to_mine:
+                            border_territories.append(f"{territory}({territory_data.armies})")
+                if border_territories:
+                    prompt += f"  Border territories (adjacent to yours): {', '.join(border_territories)}\n"
+                prompt += "\n"
+        
+        # Add continent information for strategic planning
+        prompt += "CONTINENT INFORMATION:\n"
+        continent_data = {
+            "North America": {"bonus": 5, "territories": ["Alaska", "Northwest Territory", "Alberta", "Ontario", "Quebec", "Greenland", "Western United States", "Eastern United States", "Central America"]},
+            "South America": {"bonus": 2, "territories": ["Venezuela", "Peru", "Brazil", "Argentina"]},
+            "Europe": {"bonus": 5, "territories": ["Iceland", "Scandinavia", "Great Britain", "Northern Europe", "Western Europe", "Southern Europe", "Ukraine"]},
+            "Africa": {"bonus": 3, "territories": ["North Africa", "Egypt", "East Africa", "Congo", "South Africa", "Madagascar"]},
+            "Asia": {"bonus": 7, "territories": ["Ural", "Siberia", "Yakutsk", "Kamchatka", "Irkutsk", "Mongolia", "Japan", "China", "Afghanistan", "Middle East", "India", "Siam"]},
+            "Australia": {"bonus": 2, "territories": ["Indonesia", "New Guinea", "Western Australia", "Eastern Australia"]}
+        }
+        
+        for continent_name, continent_info in continent_data.items():
+            my_territories_in_continent = [t for t in continent_info["territories"] if t in my_player.territories]
+            enemy_territories_in_continent = []
+            for player_name, player_data in game_state.players.items():
+                if player_name != self.name:
+                    enemy_territories_in_continent.extend([t for t in continent_info["territories"] if t in player_data.territories])
+            
+            if my_territories_in_continent:
+                prompt += f"{continent_name} (Bonus: +{continent_info['bonus']} armies):\n"
+                prompt += f"  Your territories: {', '.join(my_territories_in_continent)}\n"
+                if enemy_territories_in_continent:
+                    prompt += f"  Enemy territories: {', '.join(enemy_territories_in_continent)}\n"
+                    missing = [t for t in continent_info["territories"] if t not in my_territories_in_continent and t not in enemy_territories_in_continent]
+                    if missing:
+                        prompt += f"  Unclaimed: {', '.join(missing)}\n"
+                else:
+                    prompt += f"  🎉 YOU CONTROL THIS CONTINENT! (+{continent_info['bonus']} bonus armies)\n"
+                prompt += "\n"
+        
+        # List valid reinforce actions
+        valid_reinforce = get_valid_reinforce_actions(game_state, my_player, self.risk_client)
+        
+        # List valid card trade actions
+        valid_trades = get_valid_card_trade_actions(game_state, my_player)
+        
+        prompt += "AVAILABLE ACTIONS:\n"
+        
+        # Add card trading actions first (if available)
+        if valid_trades:
+            prompt += "CARD TRADING (optional - trade 3 cards for bonus armies):\n"
+            for i, action in enumerate(valid_trades, 1):
+                card_indices = action['card_indices']
+                cards_to_trade = [my_player.cards[idx] for idx in card_indices]
+                prompt += f"{i}. Trade cards at indices {card_indices} (cards: {', '.join(cards_to_trade)})\n"
+                prompt += f"   Valid parameters: card_indices={card_indices}\n"
+                prompt += f"   Example: trade_cards(card_indices={card_indices})\n"
+                prompt += "\n"
+        else:
+            # Explain why card trading is not available
+            if len(my_player.cards) < 3:
+                prompt += f"CARD TRADING: NOT AVAILABLE - you have {len(my_player.cards)} cards, need exactly 3 to trade\n"
+                prompt += f"DO NOT try to trade cards - you don't have enough!\n"
+            else:
+                prompt += "CARD TRADING: No valid 3-card combinations available\n"
+            prompt += "\n"
+        
+        # Add reinforce actions
+        if valid_reinforce:
+            prompt += "REINFORCE ACTIONS:\n"
+            for action in valid_reinforce:
+                prompt += f"- reinforce: territory='{action['territory']}', num_armies=1-{action['max_armies']}\n"
+        else:
+            prompt += "- No valid reinforce actions available\n"
+        
+        # Add important rules about card trading
+        prompt += "\nCARD TRADING RULES:\n"
+        prompt += "1. You can only trade exactly 3 cards at a time\n"
+        prompt += "2. Valid combinations: 3 of same type OR 1 of each type (Infantry, Cavalry, Artillery)\n"
+        prompt += "3. Jokers can substitute for any card type\n"
+        prompt += "4. You get bonus armies when trading cards\n"
+        prompt += "5. You can only trade cards you actually have\n"
+        prompt += f"6. Your current cards: {my_player.cards} (indices 0-{len(my_player.cards)-1 if my_player.cards else -1})\n"
+        
+        # Add explicit warning if no cards available
+        if len(my_player.cards) < 3:
+            prompt += f"7. ⚠️  WARNING: You only have {len(my_player.cards)} cards - DO NOT try to trade cards!\n"
+            prompt += f"8. ⚠️  Focus on reinforcing territories instead\n"
+        
+        return prompt
+
+    def _create_simple_attack_prompt(self, game_state: GameState) -> str:
+        """Create a simplified attack prompt focused on function calling."""
+        my_player = game_state.players.get(self.name)
+        if not my_player:
+            return "Error: Could not find myself in the game state."
+
+        player_id = my_player.id
+        
+        prompt = f"You are {self.name} playing Risk. You MUST use Ollama's function calling mechanism.\n\n"
+        prompt += "🔥 CRITICAL: You MUST use the function calling mechanism. DO NOT write function calls as text strings. 🔥\n\n"
+        prompt += f"ATTACK PHASE: Choose an attack from the list below.\n"
+        prompt += f"Your territories: {', '.join(my_player.territories)}\n\n"
+        
+        # IMPORTANT: Only attack function is allowed in this phase
+        prompt += "PHASE RESTRICTIONS:\n"
+        prompt += "- ONLY attack function is allowed in ATTACK phase\n"
+        prompt += "- DO NOT use reinforce, fortify, move_armies, or trade_cards functions\n"
+        prompt += "- You can attack multiple times\n\n"
+        
+        # Add comprehensive board state information
+        # NOTE: Using fresh game_state to ensure enemy positions are current
+        prompt += "BOARD STATE:\n"
+        for player_name, player_data in game_state.players.items():
+            if player_name != self.name:  # Show enemy information
+                prompt += f"ENEMY {player_name} (ID {player_data.id}):\n"
+                prompt += f"  Territories: {', '.join(player_data.territories)}\n"
+                prompt += f"  Total armies: {player_data.total_armies}\n"
+                # Show army distribution for key territories (from fresh game state)
+                border_territories = []
+                for territory in player_data.territories:
+                    if territory in game_state.territories:
+                        territory_data = game_state.territories[territory]
+                        adjacent_to_mine = any(adj in my_player.territories for adj in territory_data.adjacent_territories)
+                        if adjacent_to_mine:
+                            border_territories.append(f"{territory}({territory_data.armies})")
+                if border_territories:
+                    prompt += f"  Border territories (adjacent to yours): {', '.join(border_territories)}\n"
+                prompt += "\n"
+        
+        # Add continent information for strategic planning
+        prompt += "CONTINENT INFORMATION:\n"
+        continent_data = {
+            "North America": {"bonus": 5, "territories": ["Alaska", "Northwest Territory", "Alberta", "Ontario", "Quebec", "Greenland", "Western United States", "Eastern United States", "Central America"]},
+            "South America": {"bonus": 2, "territories": ["Venezuela", "Peru", "Brazil", "Argentina"]},
+            "Europe": {"bonus": 5, "territories": ["Iceland", "Scandinavia", "Great Britain", "Northern Europe", "Western Europe", "Southern Europe", "Ukraine"]},
+            "Africa": {"bonus": 3, "territories": ["North Africa", "Egypt", "East Africa", "Congo", "South Africa", "Madagascar"]},
+            "Asia": {"bonus": 7, "territories": ["Ural", "Siberia", "Yakutsk", "Kamchatka", "Irkutsk", "Mongolia", "Japan", "China", "Afghanistan", "Middle East", "India", "Siam"]},
+            "Australia": {"bonus": 2, "territories": ["Indonesia", "New Guinea", "Western Australia", "Eastern Australia"]}
+        }
+        
+        for continent_name, continent_info in continent_data.items():
+            my_territories_in_continent = [t for t in continent_info["territories"] if t in my_player.territories]
+            enemy_territories_in_continent = []
+            for player_name, player_data in game_state.players.items():
+                if player_name != self.name:
+                    enemy_territories_in_continent.extend([t for t in continent_info["territories"] if t in player_data.territories])
+            
+            if my_territories_in_continent:
+                prompt += f"{continent_name} (Bonus: +{continent_info['bonus']} armies):\n"
+                prompt += f"  Your territories: {', '.join(my_territories_in_continent)}\n"
+                if enemy_territories_in_continent:
+                    prompt += f"  Enemy territories: {', '.join(enemy_territories_in_continent)}\n"
+                    missing = [t for t in continent_info["territories"] if t not in my_territories_in_continent and t not in enemy_territories_in_continent]
+                    if missing:
+                        prompt += f"  Unclaimed: {', '.join(missing)}\n"
+                else:
+                    prompt += f"  🎉 YOU CONTROL THIS CONTINENT! (+{continent_info['bonus']} bonus armies)\n"
+                prompt += "\n"
+        
+        # List valid attack actions with clear parameter guidance
+        valid_attacks = get_valid_attack_actions(game_state, my_player)
+        
+        prompt += "AVAILABLE ATTACKS:\n"
+        if valid_attacks:
+            for i, action in enumerate(valid_attacks, 1):
+                # Get the territory info to show available armies
+                from_territory = game_state.territories.get(action['from'])
+                available_armies = from_territory.armies if from_territory else 0
+                max_attack_armies = available_armies - 1  # Must leave 1 army behind
+                
+                prompt += f"{i}. Attack from '{action['from']}' to '{action['to']}'\n"
+                prompt += f"   Available armies: {available_armies} (can attack with 1-{max_attack_armies})\n"
+                prompt += f"   Valid parameters: num_armies=1-{max_attack_armies}, num_dice=1-{min(action['max_dice'], max_attack_armies)}\n"
+                
+                # Provide specific valid examples
+                if max_attack_armies >= 1:
+                    prompt += f"   Example 1: attack(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1, num_dice=1)\n"
+                if max_attack_armies >= 2:
+                    prompt += f"   Example 2: attack(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=2, num_dice=2)\n"
+                if max_attack_armies >= 3:
+                    prompt += f"   Example 3: attack(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=3, num_dice=3)\n"
+                
+                prompt += "\n"
+        else:
+            prompt += "- No valid attacks available\n"
+        
+        prompt += "CRITICAL ATTACK RULES:\n"
+        prompt += "1. num_armies: Must be 1 to (available armies - 1)\n"
+        prompt += "2. num_dice: Must be 1 to min(num_armies, 3)\n"
+        prompt += "3. You must leave at least 1 army in your territory\n"
+        prompt += "4. You can roll at most 3 dice\n"
+        prompt += "5. Both parameters must be positive integers\n"
+        prompt += "6. num_dice CANNOT exceed num_armies\n"
+        prompt += "7. num_armies CANNOT exceed available armies minus 1\n"
+        
+        return prompt
+
+    def _create_simple_fortify_prompt(self, game_state: GameState) -> str:
+        """Create a simplified fortify prompt focused on function calling."""
+        my_player = game_state.players.get(self.name)
+        if not my_player:
+            return "Error: Could not find myself in the game state."
+
+        player_id = my_player.id
+        
+        prompt = f"You are {self.name} playing Risk. You MUST use Ollama's function calling mechanism.\n\n"
+        prompt += "🔥 CRITICAL: You MUST use the function calling mechanism. DO NOT write function calls as text strings. 🔥\n\n"
+        prompt += f"FORTIFY PHASE: Choose a fortify move from the list below.\n"
+        prompt += f"Your territories: {', '.join(my_player.territories)}\n\n"
+        
+        # IMPORTANT: Only fortify function is allowed in this phase
+        prompt += "PHASE RESTRICTIONS:\n"
+        prompt += "- ONLY fortify function is allowed in FORTIFY phase\n"
+        prompt += "- DO NOT use reinforce, attack, move_armies, or trade_cards functions\n"
+        prompt += "- You can fortify multiple times\n\n"
+        
+        # Add continent information for strategic planning
+        prompt += "CONTINENT INFORMATION:\n"
+        continent_data = {
+            "North America": {"bonus": 5, "territories": ["Alaska", "Northwest Territory", "Alberta", "Ontario", "Quebec", "Greenland", "Western United States", "Eastern United States", "Central America"]},
+            "South America": {"bonus": 2, "territories": ["Venezuela", "Peru", "Brazil", "Argentina"]},
+            "Europe": {"bonus": 5, "territories": ["Iceland", "Scandinavia", "Great Britain", "Northern Europe", "Western Europe", "Southern Europe", "Ukraine"]},
+            "Africa": {"bonus": 3, "territories": ["North Africa", "Egypt", "East Africa", "Congo", "South Africa", "Madagascar"]},
+            "Asia": {"bonus": 7, "territories": ["Ural", "Siberia", "Yakutsk", "Kamchatka", "Irkutsk", "Mongolia", "Japan", "China", "Afghanistan", "Middle East", "India", "Siam"]},
+            "Australia": {"bonus": 2, "territories": ["Indonesia", "New Guinea", "Western Australia", "Eastern Australia"]}
+        }
+        
+        for continent_name, continent_info in continent_data.items():
+            my_territories_in_continent = [t for t in continent_info["territories"] if t in my_player.territories]
+            enemy_territories_in_continent = []
+            for player_name, player_data in game_state.players.items():
+                if player_name != self.name:
+                    enemy_territories_in_continent.extend([t for t in continent_info["territories"] if t in player_data.territories])
+            
+            if my_territories_in_continent:
+                prompt += f"{continent_name} (Bonus: +{continent_info['bonus']} armies):\n"
+                prompt += f"  Your territories: {', '.join(my_territories_in_continent)}\n"
+                if enemy_territories_in_continent:
+                    prompt += f"  Enemy territories: {', '.join(enemy_territories_in_continent)}\n"
+                    missing = [t for t in continent_info["territories"] if t not in my_territories_in_continent and t not in enemy_territories_in_continent]
+                    if missing:
+                        prompt += f"  Unclaimed: {', '.join(missing)}\n"
+                else:
+                    prompt += f"  🎉 YOU CONTROL THIS CONTINENT! (+{continent_info['bonus']} bonus armies)\n"
+                prompt += "\n"
+        
+        # List valid fortify actions
+        valid_fortifies = get_valid_fortify_actions(game_state, my_player)
+        
+        prompt += "AVAILABLE ACTIONS:\n"
+        if valid_fortifies:
+            for i, action in enumerate(valid_fortifies, 1):
+                prompt += f"{i}. Fortify from '{action['from']}' to '{action['to']}'\n"
+                prompt += f"   Available armies: {action['max_armies']} (can move 1-{action['max_armies']})\n"
+                prompt += f"   Valid parameters: from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1-{action['max_armies']}\n"
+                
+                # Provide specific valid examples
+                prompt += f"   Example: fortify(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1)\n"
+                if action['max_armies'] >= 2:
+                    prompt += f"   Example: fortify(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=2)\n"
+                prompt += "\n"
+        else:
+            prompt += "- No valid fortify moves available\n"
+        
+        prompt += "CRITICAL FORTIFY RULES:\n"
+        prompt += "1. You MUST use the fortify function with ALL required parameters\n"
+        prompt += "2. Required parameters: from_territory, to_territory, num_armies\n"
+        prompt += "3. Both territories must be yours and connected\n"
+        prompt += "4. You must leave at least 1 army in the source territory\n"
+        prompt += "5. num_armies must be a positive integer\n"
+        prompt += "6. DO NOT use any other functions in fortify phase\n"
+        prompt += "7. DO NOT write function calls as text - use the function calling mechanism\n"
+        
+        return prompt
+
+    def _create_simple_move_armies_prompt(self, game_state: GameState) -> str:
+        """Create a simplified move armies prompt focused on function calling."""
+        my_player = game_state.players.get(self.name)
+        if not my_player:
+            return "Error: Could not find myself in the game state."
+
+        player_id = my_player.id
+        
+        prompt = f"You are {self.name} playing Risk. You MUST use Ollama's function calling mechanism.\n\n"
+        prompt += "🔥 CRITICAL: You MUST use the function calling mechanism. DO NOT write function calls as text strings. 🔥\n\n"
+        prompt += f"MOVE ARMIES PHASE: Move armies after conquering a territory.\n"
+        prompt += f"Your territories: {', '.join(my_player.territories)}\n\n"
+        
+        # IMPORTANT: Only move_armies function is allowed in this phase
+        prompt += "PHASE RESTRICTIONS:\n"
+        prompt += "- ONLY move_armies function is allowed in MOVE ARMIES phase\n"
+        prompt += "- DO NOT use reinforce, attack, fortify, or trade_cards functions\n"
+        prompt += "- This phase happens after successfully conquering a territory\n\n"
+        
+        # List valid move armies actions
+        valid_moves = get_valid_move_armies_actions(game_state, my_player)
+        
+        prompt += "AVAILABLE ACTIONS:\n"
+        if valid_moves:
+            for action in valid_moves:
+                prompt += f"- move_armies: from_territory='{action['from']}', to_territory='{action['to']}', num_armies={action['min_armies']}-{action['max_armies']}\n"
+        else:
+            prompt += "- No valid move armies actions available\n"
+        
         return prompt
 
 

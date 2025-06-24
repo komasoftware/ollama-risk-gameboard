@@ -93,10 +93,6 @@ async def main():
         print(f"  - {agent.get_strategy_description()}")
     
     print(f"\n🎮 Starting single game...")
-    print(f"\n🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮 GAME START 🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮🎮")
-    print(f"Starting new game with {len(agents)} agents:")
-    for agent in agents:
-        print(f"  - {agent.get_strategy_description()}")
     
     game_config_summary = summarize_game_config(CONFIG_FILE)
     start_new_game(CONFIG_FILE)

@@ -53,6 +53,13 @@ risk/
 - **Error Handling**: Robust error handling for API failures and model responses
 - **Performance**: Optimize for reasonable response times during gameplay
 
+## 🚫 Important Workflow Rules
+
+- **NEVER start games automatically**: Always wait for user feedback before running any game
+- **Always ask for confirmation**: Before executing `python main.py` or any game commands, ask the user if they want to proceed
+- **User controls execution**: The user should be the one to decide when to run games and test changes
+- **Provide clear next steps**: After making changes, explain what the user can do to test them, but don't execute without permission
+
 ## 📋 Development Guidelines
 
 - **Separation of Concerns**: Keep agent logic and orchestration separate

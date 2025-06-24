@@ -105,13 +105,13 @@ class OllamaAgentClient:
                     "type": "object",
                     "properties": {
                         "player_id": {"type": "integer", "description": "Your unique player ID"},
-                        "cards": {
+                        "card_indices": {
                             "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of card names to trade"
+                            "items": {"type": "integer"},
+                            "description": "List of card indices (0-based) to trade"
                         }
                     },
-                    "required": ["player_id", "cards"]
+                    "required": ["player_id", "card_indices"]
                 }
             )
         ]
@@ -132,121 +132,173 @@ class OllamaAgentClient:
         # Create the system prompt
         system_prompt = f"""You are an AI agent playing the board game Risk. Your name is {player_name}.
 
-🔥 CRITICAL VICTORY CONDITION: You must ELIMINATE ALL OTHER PLAYERS to win! 🔥
-This means you need to conquer every territory on the board and eliminate every opponent.
-Territory control alone is not enough - you must annihilate your enemies completely!
+You interact with the game by calling functions using the function calling mechanism.
 
-CARD SYSTEM:
-- You earn a card EVERY TIME you conquer a territory (not just at the end of turn)
-- Cards come in four types: Infantry, Cavalry, Artillery, and Joker (wild).
-- During the Reinforce Phase, you can trade sets of 3 cards for bonus armies:
-  * 3 Infantry = 4 armies
-  * 3 Cavalry = 6 armies
-  * 3 Artillery = 8 armies
-  * 1 Infantry + 1 Cavalry + 1 Artillery = 10 armies
-  * Jokers can substitute for any type; any valid 3-card combo with jokers = 10 armies
-- If you trade a card that matches a territory you own, you get +2 bonus armies placed on that territory.
-- You can trade multiple times per turn if you have enough cards.
-- Trade cards using the `trade_cards` function.
+**CRITICAL: You MUST use the function calling mechanism. DO NOT write function calls as text strings.**
 
-You interact with the game by calling functions. A player's turn has three phases: Reinforce, Attack, and Fortify. The phase will advance automatically when you have no more valid actions in the current phase.
+**CRITICAL: You MUST use the function calling mechanism. DO NOT write function calls as text strings.**
 
-**CRITICAL: You MUST use the function calling mechanism provided by Ollama. DO NOT write function calls as text. Use the tools parameter to make actual function calls.**
+**CRITICAL: You MUST use the function calling mechanism. DO NOT write function calls as text strings.**
 
-**Turn Workflow:**
-1.  **Reinforce Phase**: Place all your reinforcement armies across your territories using the `reinforce` function. You can call it multiple times. The phase will advance automatically when you have no more armies to place.
-2.  **Attack Phase**: 🎯 BE AGGRESSIVE! Attack enemy territories to expand your empire and eliminate opponents. You earn a card for every territory you conquer! You can call `attack` multiple times. The phase will advance automatically when you have no more valid attacks.
-    - **IMPORTANT:** You MUST use the `attack` function to attack. Plain text or reasoning alone will NOT result in any attacks. Only function calls will be executed.
-    - **EXAMPLE:**
-      To attack from Alaska to Northwest Territory with 3 armies and 3 dice, use the attack function with these parameters:
-      - player_id: 0
-      - from_territory: "Alaska"
-      - to_territory: "Northwest Territory"
-      - num_armies: 3
-      - num_dice: 3
-    - You can call `attack` multiple times in a single turn. The phase will advance automatically when you have no more valid attacks.
-3.  **Fortify Phase**: You can move armies between two of your connected territories once. Use the `fortify` function for this. The phase will advance automatically when you have no more valid fortify actions.
+Available functions:
+- reinforce: Place armies on your territories
+- attack: Attack enemy territories  
+- fortify: Move armies between your territories
+- move_armies: Move armies after conquering a territory
+- trade_cards: Trade cards for bonus armies (only during reinforce phase)
 
-Analyze the game state provided in the user prompt and make strategic decisions. Focus on making the best moves in each phase - the game will automatically advance phases when appropriate.
+Always use the function calling mechanism. Never write function calls as text.
+"""
 
-IMPORTANT: Use the function calling mechanism provided by Ollama. DO NOT write function calls as text strings."""
+        # Check if player has enough cards for trading
+        can_trade_cards = False
+        if player_id is not None:
+            try:
+                game_state = self.risk_client.get_game_state()
+                current_player = game_state.players.get(player_name)
+                if current_player and len(current_player.cards) >= 3:
+                    can_trade_cards = True
+                    logger.info(f"[DEBUG] {player_name} has {len(current_player.cards)} cards - card trading enabled")
+                else:
+                    logger.info(f"[DEBUG] {player_name} has {len(current_player.cards) if current_player else 0} cards - card trading disabled")
+            except Exception as e:
+                logger.warning(f"[DEBUG] Could not check card count for {player_name}: {e}")
 
-        # Conditionally enable tools
-        if use_tools:
-            # Convert function definitions to Ollama format
-            tools = []
-            for func in self.functions:
-                tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": func.name,
-                        "description": func.description,
-                        "parameters": func.parameters
-                    }
-                })
+        # Try different prompt strategies if function calling fails
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Modify prompt based on attempt number
+                if attempt == 0:
+                    # First attempt: Full context
+                    current_prompt = prompt
+                elif attempt == 1:
+                    # Second attempt: Simplified prompt
+                    current_prompt = f"""You are {player_name} playing Risk. 
 
-            logger.info(f"[DEBUG] Calling Ollama with tools: {len(tools)} functions defined")
-            logger.info(f"[DEBUG] Tools being passed: {json.dumps(tools, indent=2)}")
+CURRENT PHASE: {prompt.split('CURRENT PHASE:')[1].split('\n')[0] if 'CURRENT PHASE:' in prompt else 'Unknown'}
 
-            # Make the API call to Ollama with function calling
-            response = ollama.chat(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                tools=tools,
-                stream=False
-            )
-        else:
-            # Make the API call without function calling
-            response = ollama.chat(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                stream=False
-            )
+{prompt.split('AVAILABLE ACTIONS:')[1] if 'AVAILABLE ACTIONS:' in prompt else 'No actions available'}
 
-        try:
-            # Log the AI's thinking process
-            ai_thinking = response.message.content
-            if ai_thinking and ai_thinking.strip():
-                logger.info(f"\n🤔 {player_name} THINKING:\n{ai_thinking}\n")
-            
-            # Debug: Check if tool_calls exist
-            has_tool_calls = hasattr(response, 'message') and hasattr(response.message, 'tool_calls') and response.message.tool_calls
-            logger.info(f"[DEBUG] use_tools={use_tools}, has_tool_calls={has_tool_calls}")
-            logger.info(f"[DEBUG] Response object type: {type(response)}")
-            logger.info(f"[DEBUG] Response message type: {type(response.message)}")
-            logger.info(f"[DEBUG] Response message attributes: {dir(response.message)}")
-            
-            if has_tool_calls:
-                logger.info(f"[DEBUG] Tool calls found: {response.message.tool_calls}")
-                logger.info(f"[DEBUG] Number of tool calls: {len(response.message.tool_calls)}")
-                for i, tool_call in enumerate(response.message.tool_calls):
-                    logger.info(f"[DEBUG] Tool call {i}: {tool_call}")
+Use the function calling mechanism to make ONE action. Include ALL required parameters."""
+                else:
+                    # Third attempt: Direct instruction
+                    current_prompt = f"""You are {player_name}. 
+
+{prompt.split('AVAILABLE ACTIONS:')[1] if 'AVAILABLE ACTIONS:' in prompt else 'No actions available'}
+
+Make ONE function call using the function calling mechanism. Include ALL required parameters."""
+
+                # Conditionally enable tools
+                if use_tools:
+                    # Convert function definitions to Ollama format, excluding trade_cards if not available
+                    tools = []
+                    for func in self.functions:
+                        # Skip trade_cards function if player doesn't have enough cards
+                        if func.name == "trade_cards" and not can_trade_cards:
+                            logger.info(f"[DEBUG] Excluding trade_cards function for {player_name} (insufficient cards)")
+                            continue
+                        
+                        tools.append({
+                            "type": "function",
+                            "function": {
+                                "name": func.name,
+                                "description": func.description,
+                                "parameters": func.parameters
+                            }
+                        })
+
+                    logger.info(f"[DEBUG] Attempt {attempt + 1}: Calling Ollama with tools: {len(tools)} functions defined (trade_cards {'enabled' if can_trade_cards else 'disabled'})")
+
+                    # Make the API call to Ollama with function calling
+                    response = ollama.chat(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": current_prompt}
+                        ],
+                        tools=tools,
+                        stream=False
+                    )
+                else:
+                    # Make the API call without function calling
+                    response = ollama.chat(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": current_prompt}
+                        ],
+                        stream=False
+                    )
+
+                # Log the AI's thinking process
+                ai_thinking = response.message.content
+                if ai_thinking and ai_thinking.strip():
+                    logger.info(f"\n🤔 {player_name} THINKING (Attempt {attempt + 1}):\n{ai_thinking}\n")
+                
+                # Debug: Check if tool_calls exist
+                has_tool_calls = hasattr(response, 'message') and hasattr(response.message, 'tool_calls') and response.message.tool_calls
+                logger.info(f"[DEBUG] Attempt {attempt + 1}: use_tools={use_tools}, has_tool_calls={has_tool_calls}")
+                
+                # Additional debugging for function calling issues
+                if use_tools and not has_tool_calls:
+                    logger.warning(f"[DEBUG] Function calling failed for {player_name} - no tool_calls generated")
+                    logger.warning(f"[DEBUG] Model: {self.model}")
+                    logger.warning(f"[DEBUG] Tools provided: {len(tools)}")
+                    logger.warning(f"[DEBUG] Response type: {type(response)}")
+                    logger.warning(f"[DEBUG] Response attributes: {dir(response)}")
+                    if hasattr(response, 'message'):
+                        logger.warning(f"[DEBUG] Message attributes: {dir(response.message)}")
+                
+                # Check if the response contains tool calls and tools were used
+                if use_tools and has_tool_calls:
+                    # Handle the function calls
+                    tool_results = await self._handle_function_calls(response.message.tool_calls, player_id=player_id)
+                    logger.info(f"\n🎯 {player_name} DECISION(S) (Attempt {attempt + 1}):\n{tool_results}\n")
+                    # Filter out server response JSON from the results
+                    filtered_results = self._filter_server_json(tool_results)
+                    return f"Executed actions: {filtered_results}"
+                else:
+                    # Fallback: Try to parse function calls from text content
+                    logger.info(f"[DEBUG] Attempt {attempt + 1}: No tool calls found, checking text content for function calls")
+                    if 'attack' in ai_thinking.lower() or 'function' in ai_thinking.lower():
+                        logger.info(f"[DEBUG] Attempt {attempt + 1}: Text contains potential function calls, but LLM didn't use tool_calls mechanism")
+                        if attempt < max_retries - 1:
+                            logger.info(f"[DEBUG] Attempt {attempt + 1} failed, retrying with different prompt...")
+                            continue
+                    return response.message.content
+                
+            except Exception as e:
+                logger.error(f"[DEBUG] Attempt {attempt + 1} failed with error: {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"[DEBUG] Attempt {attempt + 1} failed, retrying...")
+                    continue
+                else:
+                    return f"Error communicating with Ollama after {max_retries} attempts: {str(e)}"
+        
+        return f"Failed to get valid response after {max_retries} attempts"
+    
+    def _filter_server_json(self, results: str) -> str:
+        """Filter out server response JSON from the results string."""
+        if not results:
+            return results
+        
+        # Split by lines and filter out lines containing server response JSON
+        lines = results.split('\n')
+        filtered_lines = []
+        
+        for line in lines:
+            # Skip lines that contain server response JSON patterns
+            if '| Server response:' in line and ('{' in line or 'game_state' in line):
+                # Extract just the action part before the server response
+                if '| Server response:' in line:
+                    action_part = line.split('| Server response:')[0].strip()
+                    if action_part:
+                        filtered_lines.append(action_part)
             else:
-                logger.info(f"[DEBUG] No tool_calls found in response")
-                logger.info(f"[DEBUG] Response message content: {repr(response.message.content)}")
-            
-            # Check if the response contains tool calls and tools were used
-            if use_tools and has_tool_calls:
-                # Handle the function calls
-                tool_results = await self._handle_function_calls(response.message.tool_calls, player_id=player_id)
-                logger.info(f"\n🎯 {player_name} DECISION(S):\n{tool_results}\n")
-                return f"Executed actions: {tool_results}"
-            else:
-                # Fallback: Try to parse function calls from text content
-                logger.info(f"[DEBUG] No tool calls found, checking text content for function calls")
-                if 'attack' in ai_thinking.lower() or 'function' in ai_thinking.lower():
-                    logger.info(f"[DEBUG] Text contains potential function calls, but LLM didn't use tool_calls mechanism")
-                    logger.info(f"[DEBUG] This means the LLM is not properly using Ollama's function calling feature")
-                return response.message.content
-            
-        except Exception as e:
-            return f"Error communicating with Ollama: {str(e)}"
+                filtered_lines.append(line)
+        
+        return '\n'.join(filtered_lines)
     
     async def _handle_function_calls(self, tool_calls, player_id: Optional[int] = None, phase: Optional[str] = None) -> str:
         """Handle function calls from the AI agent."""
@@ -277,8 +329,9 @@ IMPORTANT: Use the function calling mechanism provided by Ollama. DO NOT write f
             
             # --- Sanitize and Validate Arguments ---
             # 1. Inject player_id if missing for required functions
-            if function_name in ["reinforce", "attack", "fortify", "trade_cards"] and 'player_id' not in arguments and player_id is not None:
+            if function_name in ["reinforce", "attack", "fortify", "trade_cards", "move_armies"] and 'player_id' not in arguments and player_id is not None:
                 arguments['player_id'] = player_id
+                logger.info(f"[DEBUG] Injected missing player_id: {player_id} for {function_name}")
 
             # 2. Ensure 'player_id' is an integer
             if 'player_id' in arguments:
@@ -287,6 +340,7 @@ IMPORTANT: Use the function calling mechanism provided by Ollama. DO NOT write f
                 except (ValueError, TypeError):
                     if player_id is not None:
                         arguments['player_id'] = player_id
+                        logger.info(f"[DEBUG] Fixed invalid player_id, using provided: {player_id}")
                     else:
                         results.append(f"Invalid or missing player_id for {function_name}")
                         continue
@@ -302,6 +356,7 @@ IMPORTANT: Use the function calling mechanism provided by Ollama. DO NOT write f
                     armies_value = arguments['armies']
                     del arguments['armies']
                     arguments['num_armies'] = armies_value
+                    logger.info(f"[DEBUG] Converted 'armies' to 'num_armies': {armies_value}")
                 
                 if armies_value is not None:
                     try:
@@ -370,6 +425,120 @@ IMPORTANT: Use the function calling mechanism provided by Ollama. DO NOT write f
                 for key in list(arguments.keys()):
                     if key not in expected_keys:
                         del arguments[key]
+                        logger.info(f"[DEBUG] Removed unexpected key '{key}' from {function_name} arguments")
+            
+            # Handle trade_cards function separately
+            elif function_name == "trade_cards":
+                # Validate required parameters for trade_cards
+                required_keys = ['player_id', 'card_indices']
+                if not all(key in arguments for key in required_keys):
+                    missing = [key for key in required_keys if key not in arguments]
+                    results.append(f"Missing required parameters for trade_cards: {missing}")
+                    continue
+                
+                # Ensure card_indices is a list of integers
+                if 'card_indices' in arguments:
+                    try:
+                        card_indices = arguments['card_indices']
+                        
+                        # Handle case where LLM passes string representation of list
+                        if isinstance(card_indices, str):
+                            # Try to parse string as JSON list
+                            import json
+                            try:
+                                card_indices = json.loads(card_indices)
+                                logger.info(f"[DEBUG] Parsed card_indices string to list: {card_indices}")
+                            except json.JSONDecodeError:
+                                # Try to parse as simple bracket notation
+                                try:
+                                    # Remove brackets and split by comma
+                                    card_indices = card_indices.strip('[]').split(',')
+                                    card_indices = [int(x.strip()) for x in card_indices if x.strip()]
+                                    logger.info(f"[DEBUG] Parsed card_indices string manually: {card_indices}")
+                                except (ValueError, AttributeError):
+                                    results.append(f"Invalid card_indices format: {card_indices}. Must be a list of integers.")
+                                    continue
+                        
+                        # Validate it's a list
+                        if not isinstance(card_indices, list):
+                            results.append(f"card_indices must be a list, got {type(card_indices)}")
+                            continue
+                        
+                        # Validate all elements are integers
+                        if not all(isinstance(x, int) for x in card_indices):
+                            results.append(f"All card_indices must be integers, got: {card_indices}")
+                            continue
+                        
+                        # Get the actual cards from the game state to validate indices
+                        try:
+                            game_state = self.risk_client.get_game_state()
+                            current_player = game_state.players.get(player_name)
+                            
+                            if not current_player:
+                                results.append(f"Could not find player {player_name} in game state")
+                                continue
+                            
+                            num_cards = len(current_player.cards)
+                            
+                            # Validate card indices are within valid range
+                            if not all(0 <= x < num_cards for x in card_indices):
+                                results.append(f"card_indices must be between 0-{num_cards-1}, got: {card_indices}")
+                                continue
+                            
+                            # Validate exactly 3 cards are selected
+                            if len(card_indices) != 3:
+                                results.append(f"Must trade exactly 3 cards, got {len(card_indices)}: {card_indices}")
+                                continue
+                            
+                            # Validate no duplicate indices
+                            if len(set(card_indices)) != 3:
+                                results.append(f"Duplicate card indices not allowed: {card_indices}")
+                                continue
+                            
+                            # Check if we're in the correct phase for card trading
+                            if function_name == "trade_cards" and game_state.phase.value != "reinforce":
+                                results.append(f"Card trading is only allowed during REINFORCE phase, current phase: {game_state.phase.value}")
+                                continue
+                            
+                            # Validate the card combination is actually valid
+                            if num_cards >= 3:
+                                cards_to_trade = [current_player.cards[idx] for idx in card_indices]
+                                # Extract just the kind field from each card object or dict
+                                def get_kind(card):
+                                    if hasattr(card, 'kind'):
+                                        return card.kind
+                                    elif isinstance(card, dict) and 'kind' in card:
+                                        return card['kind']
+                                    else:
+                                        raise ValueError(f"Card has no kind: {card}")
+                                card_kinds = [get_kind(card) for card in cards_to_trade]
+                                from agents.risk_rules import _is_valid_card_combination
+                                if not _is_valid_card_combination(card_kinds):
+                                    results.append(f"Invalid card combination: {cards_to_trade}. Must be 3 of a kind or 1 of each type.")
+                                    continue
+                            else:
+                                results.append(f"Not enough cards to trade. You have {num_cards} cards, need exactly 3.")
+                                continue
+                                
+                        except Exception as e:
+                            logger.warning(f"Could not validate card combination: {e}")
+                            results.append(f"Error validating cards: {e}")
+                            continue
+                        
+                        # Update the arguments with the validated list
+                        arguments['card_indices'] = card_indices
+                        logger.info(f"[DEBUG] Validated card_indices: {card_indices}")
+                        
+                    except Exception as e:
+                        results.append(f"Error validating card_indices: {e}")
+                        continue
+                
+                # Remove any unexpected keys
+                expected_keys = ['player_id', 'card_indices']
+                for key in list(arguments.keys()):
+                    if key not in expected_keys:
+                        del arguments[key]
+                        logger.info(f"[DEBUG] Removed unexpected key '{key}' from trade_cards arguments")
             # --- End Sanitization ---
             
             if function_name in function_map:
@@ -471,6 +640,13 @@ IMPORTANT: Use the function calling mechanism provided by Ollama. DO NOT write f
                         # Get fresh game state after move_armies
                         fresh_state = self.risk_client.get_game_state()
                         logger.info(f"[DEBUG] Fresh game state after move_armies: current player = {fresh_state.current_player}, phase = {fresh_state.phase}")
+                    elif function_name == "trade_cards":
+                        result = function_map[function_name](**arguments)
+                        card_indices = arguments.get('card_indices', [])
+                        results.append(f"Traded cards with indices {card_indices} for bonus armies")
+                        # Get fresh game state after trade_cards
+                        fresh_state = self.risk_client.get_game_state()
+                        logger.info(f"[DEBUG] Fresh game state after trade_cards: current player = {fresh_state.current_player}, phase = {fresh_state.phase}")
                     else:
                         result = function_map[function_name](**arguments)
                         results.append(f"{function_name} executed successfully")

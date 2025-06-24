@@ -37,6 +37,7 @@ class Player:
     territories: List[str]
     armies: int
     cards: List[str]
+    total_armies: int
 
 
 @dataclass
@@ -123,9 +124,9 @@ class RiskAPIClient:
         response = self.session.post(f"{self.base_url}/move_armies", json=payload)
         return response.status_code == 200
     
-    def trade_cards(self, player_id: int, cards: List[str]) -> bool:
+    def trade_cards(self, player_id: int, card_indices: List[int]) -> bool:
         """Trade in cards for additional armies."""
-        payload = {"player_id": player_id, "cards": cards}
+        payload = {"player_id": player_id, "card_indices": card_indices}
         response = self.session.post(f"{self.base_url}/trade_cards", json=payload)
         return response.status_code == 200
     
@@ -186,12 +187,16 @@ class RiskAPIClient:
             else:
                 armies = player_data.get("army_supply", 0)
             
+            # Calculate total armies by summing all armies in territories
+            total_armies = sum(player_data.get("armies", {}).values())
+            
             player = Player(
                 id=player_data.get("id", -1),
                 name=player_data["name"],
                 territories=player_data.get("territories", []),
                 armies=armies,
-                cards=player_data.get("cards", [])
+                cards=player_data.get("cards", []),
+                total_armies=total_armies
             )
             players[player.name] = player
         
