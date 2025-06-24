@@ -202,6 +202,9 @@ CRITICAL INSTRUCTIONS:
 
 Choose your action now using the function calling mechanism."""
 
+        # At the end of each prompt, add a strong instruction
+        prompt += "\nIMPORTANT: YOU MUST USE THE FUNCTION CALLING MECHANISM. DO NOT WRITE FUNCTION CALLS AS TEXT STRINGS. ONLY USE THE TOOLS PROVIDED.\n"
+
         return prompt
 
     def _create_simple_reinforce_prompt(self, game_state: GameState) -> str:
@@ -289,8 +292,8 @@ Choose your action now using the function calling mechanism."""
                 card_indices = action['card_indices']
                 cards_to_trade = [my_player.cards[idx] for idx in card_indices]
                 prompt += f"{i}. Trade cards at indices {card_indices} (cards: {', '.join(cards_to_trade)})\n"
-                prompt += f"   Valid parameters: card_indices={card_indices}\n"
-                prompt += f"   Example: trade_cards(card_indices={card_indices})\n"
+                prompt += f"   Valid parameters: player_id={player_id}, card_indices={card_indices}\n"
+                prompt += f"   Example: trade_cards(player_id={player_id}, card_indices={card_indices})\n"
                 prompt += "\n"
         else:
             # Explain why card trading is not available
@@ -305,23 +308,33 @@ Choose your action now using the function calling mechanism."""
         if valid_reinforce:
             prompt += "REINFORCE ACTIONS:\n"
             for action in valid_reinforce:
-                prompt += f"- reinforce: territory='{action['territory']}', num_armies=1-{action['max_armies']}\n"
+                prompt += f"- reinforce: player_id={player_id}, territory='{action['territory']}', num_armies=1-{action['max_armies']}\n"
+                prompt += f"  Example: reinforce(player_id={player_id}, territory='{action['territory']}', num_armies=1)\n"
         else:
             prompt += "- No valid reinforce actions available\n"
         
         # Add important rules about card trading
         prompt += "\nCARD TRADING RULES:\n"
-        prompt += "1. You can only trade exactly 3 cards at a time\n"
-        prompt += "2. Valid combinations: 3 of same type OR 1 of each type (Infantry, Cavalry, Artillery)\n"
-        prompt += "3. Jokers can substitute for any card type\n"
-        prompt += "4. You get bonus armies when trading cards\n"
-        prompt += "5. You can only trade cards you actually have\n"
-        prompt += f"6. Your current cards: {my_player.cards} (indices 0-{len(my_player.cards)-1 if my_player.cards else -1})\n"
+        prompt += "1. player_id: Must be your player ID ({player_id})\n"
+        prompt += "2. You can only trade exactly 3 cards at a time\n"
+        prompt += "3. Valid combinations: 3 of same type OR 1 of each type (Infantry, Cavalry, Artillery)\n"
+        prompt += "4. Jokers can substitute for any card type\n"
+        prompt += "5. You get bonus armies when trading cards\n"
+        prompt += "6. You can only trade cards you actually have\n"
+        prompt += f"7. Your current cards: {my_player.cards} (indices 0-{len(my_player.cards)-1 if my_player.cards else -1})\n"
         
         # Add explicit warning if no cards available
         if len(my_player.cards) < 3:
-            prompt += f"7. ⚠️  WARNING: You only have {len(my_player.cards)} cards - DO NOT try to trade cards!\n"
-            prompt += f"8. ⚠️  Focus on reinforcing territories instead\n"
+            prompt += f"8. ⚠️  WARNING: You only have {len(my_player.cards)} cards - DO NOT try to trade cards!\n"
+            prompt += f"9. ⚠️  Focus on reinforcing territories instead\n"
+        
+        prompt += "\nREINFORCE RULES:\n"
+        prompt += "1. player_id: Must be your player ID ({player_id})\n"
+        prompt += "2. Required parameters: player_id, territory, num_armies\n"
+        prompt += "3. Territory must be one of your territories\n"
+        prompt += "4. num_armies must be a positive integer\n"
+        prompt += "5. DO NOT use any other functions in reinforce phase\n"
+        prompt += "6. DO NOT write function calls as text - use the function calling mechanism\n"
         
         return prompt
 
@@ -407,29 +420,33 @@ Choose your action now using the function calling mechanism."""
                 
                 prompt += f"{i}. Attack from '{action['from']}' to '{action['to']}'\n"
                 prompt += f"   Available armies: {available_armies} (can attack with 1-{max_attack_armies})\n"
-                prompt += f"   Valid parameters: num_armies=1-{max_attack_armies}, num_dice=1-{min(action['max_dice'], max_attack_armies)}\n"
+                prompt += f"   Valid parameters: player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1-{max_attack_armies}, num_dice=1-{min(action['max_dice'], max_attack_armies)}, repeat=false\n"
                 
-                # Provide specific valid examples
+                # Provide specific valid examples with ALL required parameters
                 if max_attack_armies >= 1:
-                    prompt += f"   Example 1: attack(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1, num_dice=1)\n"
+                    prompt += f"   Example 1: attack(player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1, num_dice=1, repeat=false)\n"
                 if max_attack_armies >= 2:
-                    prompt += f"   Example 2: attack(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=2, num_dice=2)\n"
+                    prompt += f"   Example 2: attack(player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies=2, num_dice=2, repeat=false)\n"
                 if max_attack_armies >= 3:
-                    prompt += f"   Example 3: attack(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=3, num_dice=3)\n"
+                    prompt += f"   Example 3: attack(player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies=3, num_dice=3, repeat=false)\n"
                 
                 prompt += "\n"
         else:
             prompt += "- No valid attacks available\n"
         
         prompt += "CRITICAL ATTACK RULES:\n"
-        prompt += "1. num_armies: Must be 1 to (available armies - 1)\n"
-        prompt += "2. num_dice: Must be 1 to min(num_armies, 3)\n"
-        prompt += "3. You must leave at least 1 army in your territory\n"
-        prompt += "4. You can roll at most 3 dice\n"
-        prompt += "5. Both parameters must be positive integers\n"
-        prompt += "6. num_dice CANNOT exceed num_armies\n"
-        prompt += "7. num_armies CANNOT exceed available armies minus 1\n"
+        prompt += "1. player_id: Must be your player ID ({player_id})\n"
+        prompt += "2. num_armies: Must be 1 to (available armies - 1)\n"
+        prompt += "3. num_dice: Must be 1 to min(num_armies, 3)\n"
+        prompt += "4. You must leave at least 1 army in your territory\n"
+        prompt += "5. You can roll at most 3 dice\n"
+        prompt += "6. Both parameters must be positive integers\n"
+        prompt += "7. num_dice CANNOT exceed num_armies\n"
+        prompt += "8. num_armies CANNOT exceed available armies minus 1\n"
+        prompt += "9. repeat: Always set to false\n"
         
+        prompt += "\nIMPORTANT: YOU MUST USE THE FUNCTION CALLING MECHANISM. DO NOT WRITE FUNCTION CALLS AS TEXT STRINGS. ONLY USE THE TOOLS PROVIDED.\n"
+
         return prompt
 
     def _create_simple_fortify_prompt(self, game_state: GameState) -> str:
@@ -489,25 +506,28 @@ Choose your action now using the function calling mechanism."""
             for i, action in enumerate(valid_fortifies, 1):
                 prompt += f"{i}. Fortify from '{action['from']}' to '{action['to']}'\n"
                 prompt += f"   Available armies: {action['max_armies']} (can move 1-{action['max_armies']})\n"
-                prompt += f"   Valid parameters: from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1-{action['max_armies']}\n"
+                prompt += f"   Valid parameters: player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1-{action['max_armies']}\n"
                 
-                # Provide specific valid examples
-                prompt += f"   Example: fortify(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1)\n"
+                # Provide specific valid examples with ALL required parameters
+                prompt += f"   Example: fortify(player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies=1)\n"
                 if action['max_armies'] >= 2:
-                    prompt += f"   Example: fortify(from_territory='{action['from']}', to_territory='{action['to']}', num_armies=2)\n"
+                    prompt += f"   Example: fortify(player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies=2)\n"
                 prompt += "\n"
         else:
             prompt += "- No valid fortify moves available\n"
         
         prompt += "CRITICAL FORTIFY RULES:\n"
-        prompt += "1. You MUST use the fortify function with ALL required parameters\n"
-        prompt += "2. Required parameters: from_territory, to_territory, num_armies\n"
-        prompt += "3. Both territories must be yours and connected\n"
-        prompt += "4. You must leave at least 1 army in the source territory\n"
-        prompt += "5. num_armies must be a positive integer\n"
-        prompt += "6. DO NOT use any other functions in fortify phase\n"
-        prompt += "7. DO NOT write function calls as text - use the function calling mechanism\n"
+        prompt += "1. player_id: Must be your player ID ({player_id})\n"
+        prompt += "2. You MUST use the fortify function with ALL required parameters\n"
+        prompt += "3. Required parameters: player_id, from_territory, to_territory, num_armies\n"
+        prompt += "4. Both territories must be yours and connected\n"
+        prompt += "5. You must leave at least 1 army in the source territory\n"
+        prompt += "6. num_armies must be a positive integer\n"
+        prompt += "7. DO NOT use any other functions in fortify phase\n"
+        prompt += "8. DO NOT write function calls as text - use the function calling mechanism\n"
         
+        prompt += "\nIMPORTANT: YOU MUST USE THE FUNCTION CALLING MECHANISM. DO NOT WRITE FUNCTION CALLS AS TEXT STRINGS. ONLY USE THE TOOLS PROVIDED.\n"
+
         return prompt
 
     def _create_simple_move_armies_prompt(self, game_state: GameState) -> str:
@@ -535,10 +555,21 @@ Choose your action now using the function calling mechanism."""
         prompt += "AVAILABLE ACTIONS:\n"
         if valid_moves:
             for action in valid_moves:
-                prompt += f"- move_armies: from_territory='{action['from']}', to_territory='{action['to']}', num_armies={action['min_armies']}-{action['max_armies']}\n"
+                prompt += f"- move_armies: player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies={action['min_armies']}-{action['max_armies']}\n"
+                prompt += f"  Example: move_armies(player_id={player_id}, from_territory='{action['from']}', to_territory='{action['to']}', num_armies={action['min_armies']})\n"
         else:
             prompt += "- No valid move armies actions available\n"
         
+        prompt += "\nCRITICAL MOVE ARMIES RULES:\n"
+        prompt += "1. player_id: Must be your player ID ({player_id})\n"
+        prompt += "2. Required parameters: player_id, from_territory, to_territory, num_armies\n"
+        prompt += "3. This phase happens after successfully conquering a territory\n"
+        prompt += "4. You must move at least the number of dice you used in the attack\n"
+        prompt += "5. DO NOT use any other functions in move armies phase\n"
+        prompt += "6. DO NOT write function calls as text - use the function calling mechanism\n"
+        
+        prompt += "\nIMPORTANT: YOU MUST USE THE FUNCTION CALLING MECHANISM. DO NOT WRITE FUNCTION CALLS AS TEXT STRINGS. ONLY USE THE TOOLS PROVIDED.\n"
+
         return prompt
 
 

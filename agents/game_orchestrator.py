@@ -301,7 +301,22 @@ class GameOrchestrator:
             result = await agent.take_turn(None)  # Agent will fetch its own state
             print(f"\n*** {agent.name} LLM FULL RESPONSE in FORTIFY ***\n{result}\n*** END LLM RESPONSE ***\n")
             logger.info(f"{agent.name} fortify action: {result}")
-            
+
+            # Fallback: Detect text-based function calls and re-prompt
+            if re.search(r"fortify\s*\(", result, re.IGNORECASE) or 'ollama.fortify' in result.lower() or 'fortify' in result.lower() and 'function calling' not in result.lower() and 'executed actions' not in result.lower():
+                print(f"\n[WARNING] {agent.name} output a text-based function call. Re-prompting with direct instruction.\n")
+                logger.warning(f"{agent.name} output a text-based function call. Re-prompting.")
+                # Minimal direct instruction
+                direct_prompt = "IMPORTANT: You must use the function calling mechanism. DO NOT write function calls as text. Try again."
+                if hasattr(agent, '_create_prompt'):
+                    prompt = agent._create_prompt(game_state)
+                    prompt += f"\n{direct_prompt}\n"
+                    logger.info(f"{agent.name} FORTIFY fallback prompt: {prompt[:500]}{'...' if len(prompt) > 500 else ''}")
+                # Re-ask the agent
+                result = await agent.take_turn(None)
+                print(f"\n*** {agent.name} LLM FULL RESPONSE in FORTIFY (RETRY) ***\n{result}\n*** END LLM RESPONSE ***\n")
+                logger.info(f"{agent.name} fortify action (retry): {result}")
+
             # Get fresh game state after the fortify
             game_state = self.risk_client.get_game_state()
             my_player = game_state.players.get(agent.name)
