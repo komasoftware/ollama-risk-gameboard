@@ -162,13 +162,18 @@ class TestDataGenerator:
         if not state:
             return
         
+        # Track turn phase
+        turn_phase = state.get("turn_phase", "Unknown")
+        self.saved_turn_phases.add(turn_phase)
+        
         # Add config prefix to filename
         config_prefix = "game_config"  # Default prefix
         if hasattr(self, 'current_config') and self.current_config:
             config_prefix = self.current_config.replace('.json', '').replace('/', '_').replace('\\', '_')
         
-        # Add config prefix to filename
-        prefixed_filename = f"{config_prefix}_{filename}"
+        # Add turn phase to filename for better organization
+        phase_suffix = f"_{turn_phase}" if turn_phase != "Unknown" else ""
+        prefixed_filename = f"{config_prefix}_{filename.replace('.json', '')}{phase_suffix}.json"
         
         if prefixed_filename in self.saved_files:
             return  # Already saved this scenario
@@ -178,11 +183,12 @@ class TestDataGenerator:
         with open(filepath, 'w') as f:
             json.dump({
                 "description": description,
+                "turn_phase": turn_phase,
                 "game_state": state
             }, f, indent=2)
         
         self.saved_files.add(prefixed_filename)
-        print(f"✓ Saved: {prefixed_filename} - {description}")
+        print(f"✓ Saved: {prefixed_filename} - {description} (phase: {turn_phase})")
     
     def generate_scenario_filename(self, description: str) -> str:
         """Generate descriptive filename based on scenario description"""
@@ -526,11 +532,11 @@ class TestDataGenerator:
         if self.saved_turn_phases:
             print(f"   Phases: {', '.join(sorted(self.saved_turn_phases))}")
         
-        print(f"\n📋 Saved Files by Scenario Type:")
+        print(f"\n📋 Scenario Coverage Summary:")
         
-        # Group files by scenario type
-        scenario_groups = {}
-        for filename in sorted(self.saved_files):
+        # Count files by scenario type
+        scenario_counts = {}
+        for filename in self.saved_files:
             # Extract scenario type from filename
             if filename.startswith("game_config_"):
                 scenario_part = filename.replace("game_config_", "")
@@ -555,15 +561,20 @@ class TestDataGenerator:
             else:
                 scenario_type = "Other Scenarios"
             
-            if scenario_type not in scenario_groups:
-                scenario_groups[scenario_type] = []
-            scenario_groups[scenario_type].append(filename)
+            scenario_counts[scenario_type] = scenario_counts.get(scenario_type, 0) + 1
         
-        # Print organized summary
-        for scenario_type, files in scenario_groups.items():
-            print(f"\n  {scenario_type} ({len(files)} files):")
-            for filename in files:
-                print(f"    • {filename}")
+        # Print concise summary with counts
+        for scenario_type, count in sorted(scenario_counts.items()):
+            print(f"  • {scenario_type}: {count} files")
+        
+        # Show sample filenames (just a few examples)
+        print(f"\n📋 Sample Files (showing 3 examples):")
+        sample_files = list(self.saved_files)[:3]
+        for filename in sample_files:
+            print(f"    • {filename}")
+        
+        if len(self.saved_files) > 3:
+            print(f"    ... and {len(self.saved_files) - 3} more files")
         
         print(f"\n📂 Test data saved in: {self.testdata_dir.absolute()}")
         print("="*60)
