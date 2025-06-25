@@ -483,17 +483,17 @@ Make ONE function call using the function calling mechanism. Include ALL require
                             # Validate card indices are within valid range
                             if not all(0 <= x < num_cards for x in card_indices):
                                 results.append(f"card_indices must be between 0-{num_cards-1}, got: {card_indices}")
-                                continue
-                            
-                            # Validate exactly 3 cards are selected
-                            if len(card_indices) != 3:
-                                results.append(f"Must trade exactly 3 cards, got {len(card_indices)}: {card_indices}")
-                                continue
-                            
-                            # Validate no duplicate indices
-                            if len(set(card_indices)) != 3:
-                                results.append(f"Duplicate card indices not allowed: {card_indices}")
-                                continue
+                            continue
+                        
+                        # Validate exactly 3 cards are selected
+                        if len(card_indices) != 3:
+                            results.append(f"Must trade exactly 3 cards, got {len(card_indices)}: {card_indices}")
+                            continue
+                        
+                        # Validate no duplicate indices
+                        if len(set(card_indices)) != 3:
+                            results.append(f"Duplicate card indices not allowed: {card_indices}")
+                            continue
                             
                             # Check if we're in the correct phase for card trading
                             if function_name == "trade_cards" and game_state.phase.value != "reinforce":

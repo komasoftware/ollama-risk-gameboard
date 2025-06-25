@@ -201,17 +201,17 @@ async def main():
         print(f"\n🎮 Starting new game with config: {config_file}")
         
         player_names = get_player_names_from_config(config_file)
-        strategy_classes = [AggressiveAgent, SimpleAgent, DefensiveAgent]
-        agents = []
-        for idx, name in enumerate(player_names):
-            strat_cls = strategy_classes[idx % len(strategy_classes)]
-            agents.append(strat_cls(name))
-        
-        print(f"✅ Players in this game: {player_names}")
-        print(f"\nCreated {len(agents)} agents:")
-        for agent in agents:
-            print(f"  - {agent.get_strategy_description()}")
-        
+    strategy_classes = [AggressiveAgent, SimpleAgent, DefensiveAgent]
+    agents = []
+    for idx, name in enumerate(player_names):
+        strat_cls = strategy_classes[idx % len(strategy_classes)]
+        agents.append(strat_cls(name))
+    
+    print(f"✅ Players in this game: {player_names}")
+    print(f"\nCreated {len(agents)} agents:")
+    for agent in agents:
+        print(f"  - {agent.get_strategy_description()}")
+    
         game_config_summary = summarize_game_config(config_file)
         display_game_summary(game_config_summary)
         

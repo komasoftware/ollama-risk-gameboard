@@ -11,7 +11,7 @@ from collections import defaultdict
 from .risk_api import GameState, Player, Territory, GamePhase
 
 
-def get_valid_reinforce_actions(game_state: GameState, player: Player, risk_client=None) -> List[Dict[str, Any]]:
+def get_valid_reinforce_actions(game_state: Any, player: dict, risk_client=None) -> List[Dict[str, Any]]:
     """
     Return a list of valid reinforce actions for the player in the current game state.
     Each action is a dict: { 'territory': str, 'max_armies': int }
@@ -22,21 +22,20 @@ def get_valid_reinforce_actions(game_state: GameState, player: Player, risk_clie
     actions = []
     
     # Check if we're in reinforce phase and have armies to place
-    if game_state.phase != GamePhase.REINFORCE:
+    if getattr(game_state, 'phase', None) != GamePhase.REINFORCE:
         return actions
     
-    # Get fresh reinforcement armies from server - NEVER use cached player.armies
+    # Get fresh reinforcement armies from server if possible
     if risk_client:
         reinforcement_armies = risk_client.get_reinforcement_armies()
     else:
-        # Fallback to player.armies if no risk_client provided (for backward compatibility)
-        reinforcement_armies = player.armies
+        reinforcement_armies = getattr(game_state, 'reinforcement_armies', 0)
     
     if reinforcement_armies == 0:
         return actions
     
     # Player can reinforce any of their territories
-    for territory_name in player.territories:
+    for territory_name in player['territories']:
         actions.append({
             'territory': territory_name,
             'max_armies': reinforcement_armies
@@ -45,7 +44,7 @@ def get_valid_reinforce_actions(game_state: GameState, player: Player, risk_clie
     return actions
 
 
-def get_valid_attack_actions(game_state: GameState, player: Player) -> List[Dict[str, Any]]:
+def get_valid_attack_actions(game_state: Any, player: dict) -> List[Dict[str, Any]]:
     """
     Return a list of valid attack actions for the player in the current game state.
     Each action is a dict: { 'from': str, 'to': str, 'max_dice': int }
@@ -56,17 +55,17 @@ def get_valid_attack_actions(game_state: GameState, player: Player) -> List[Dict
     actions = []
     
     # Check if we're in attack phase
-    if game_state.phase != GamePhase.ATTACK:
+    if getattr(game_state, 'phase', None) != GamePhase.ATTACK:
         return actions
     
     # For each territory the player owns
-    for from_territory_name in player.territories:
+    for from_territory_name in player['territories']:
         from_territory = game_state.territories.get(from_territory_name)
         if not from_territory:
             continue
         
         # Check armies in the territory (must have at least 2 to attack)
-        armies_in_territory = from_territory.armies
+        armies_in_territory = player['armies'].get(from_territory_name, 0)
         if armies_in_territory <= 1:
             continue
         
@@ -77,16 +76,13 @@ def get_valid_attack_actions(game_state: GameState, player: Player) -> List[Dict
         
         # Check adjacent territories
         for adjacent_name in from_territory.adjacent_territories:
-            adjacent_territory = game_state.territories.get(adjacent_name)
-            if not adjacent_territory:
-                continue
-            
-            # Can only attack enemy territories
-            if adjacent_territory.owner == player.name:
-                continue
-            
-            # Can only attack if adjacent territory has an owner
-            if adjacent_territory.owner is None:
+            # Find owner of adjacent territory
+            adjacent_owner = None
+            for p in game_state.players:
+                if adjacent_name in p['territories']:
+                    adjacent_owner = p['name']
+                    break
+            if adjacent_owner is None or adjacent_owner == player['name']:
                 continue
             
             actions.append({
@@ -98,7 +94,7 @@ def get_valid_attack_actions(game_state: GameState, player: Player) -> List[Dict
     return actions
 
 
-def get_valid_fortify_actions(game_state: GameState, player: Player) -> List[Dict[str, Any]]:
+def get_valid_fortify_actions(game_state: Any, player: dict) -> List[Dict[str, Any]]:
     """
     Return a list of valid fortify actions for the player in the current game state.
     Each action is a dict: { 'from': str, 'to': str, 'max_armies': int }
@@ -109,18 +105,18 @@ def get_valid_fortify_actions(game_state: GameState, player: Player) -> List[Dic
     actions = []
     
     # Check if we're in fortify phase
-    if game_state.phase != GamePhase.FORTIFY:
+    if getattr(game_state, 'phase', None) != GamePhase.FORTIFY:
         return actions
     
     # For each territory the player owns
-    player_territories_set = set(player.territories)
-    for from_territory_name in player.territories:
+    player_territories_set = set(player['territories'])
+    for from_territory_name in player['territories']:
         from_territory = game_state.territories.get(from_territory_name)
         if not from_territory:
             continue
         
         # Check armies in the territory (must have at least 2 to fortify)
-        armies_in_territory = from_territory.armies
+        armies_in_territory = player['armies'].get(from_territory_name, 0)
         if armies_in_territory <= 1:
             continue
         
@@ -148,13 +144,13 @@ def get_valid_fortify_actions(game_state: GameState, player: Player) -> List[Dic
     return actions
 
 
-def _find_connected_territories(game_state: GameState, player: Player, start_territory: str, player_territories_set: Set[str] = None) -> Set[str]:
+def _find_connected_territories(game_state: Any, player: dict, start_territory: str, player_territories_set: Set[str] = None) -> Set[str]:
     """
     Find all territories connected to start_territory via player-owned territories.
     Uses BFS to traverse the connected component.
     """
     if player_territories_set is None:
-        player_territories_set = set(player.territories)
+        player_territories_set = set(player['territories'])
     visited = set()
     queue = [start_territory]
     while queue:
@@ -171,7 +167,7 @@ def _find_connected_territories(game_state: GameState, player: Player, start_ter
     return visited
 
 
-def get_valid_card_trade_actions(game_state: GameState, player: Player) -> List[Dict[str, Any]]:
+def get_valid_card_trade_actions(game_state: Any, player: dict) -> List[Dict[str, Any]]:
     """
     Return a list of valid card trade actions for the player.
     Each action is a dict: { 'card_indices': List[int] }
@@ -181,25 +177,25 @@ def get_valid_card_trade_actions(game_state: GameState, player: Player) -> List[
     actions = []
     
     # Check if we're in reinforce phase
-    if game_state.phase != GamePhase.REINFORCE:
+    if getattr(game_state, 'phase', None) != GamePhase.REINFORCE:
         return actions
     
     # Must have at least 3 cards to trade
-    if len(player.cards) < 3:
+    if len(player['cards']) < 3:
         return actions
     
     # Generate all 3-card combinations
     from itertools import combinations
     seen_combinations = set()
     
-    for combo in combinations(range(len(player.cards)), 3):
+    for combo in combinations(range(len(player['cards'])), 3):
         # Sort the combination to avoid duplicates
         sorted_combo = tuple(sorted(combo))
         if sorted_combo in seen_combinations:
             continue
         
         # Check if this is a valid trade combination
-        card_kinds = [player.cards[i] for i in sorted_combo]
+        card_kinds = [player['cards'][i]['kind'] if isinstance(player['cards'][i], dict) else getattr(player['cards'][i], 'kind', str(player['cards'][i])) for i in sorted_combo]
         if _is_valid_card_combination(card_kinds):
             seen_combinations.add(sorted_combo)
             actions.append({
@@ -243,7 +239,7 @@ def _is_valid_card_combination(cards: List[str]) -> bool:
     return False
 
 
-def get_valid_move_armies_actions(game_state: GameState, player: Player) -> List[Dict[str, Any]]:
+def get_valid_move_armies_actions(game_state: Any, player: dict) -> List[Dict[str, Any]]:
     """
     Return a list of valid move armies actions for the player in the current game state.
     Each action is a dict: { 'from': str, 'to': str, 'max_armies': int, 'min_armies': int }
@@ -254,10 +250,13 @@ def get_valid_move_armies_actions(game_state: GameState, player: Player) -> List
     actions = []
     
     # Check if we're in move armies phase
-    if game_state.phase != GamePhase.MOVE_ARMIES:
+    if getattr(game_state, 'phase', None) != GamePhase.MOVE_ARMIES:
         return actions
     
     # Parse the possible actions from the game state
+    if not hasattr(game_state, 'possible_actions'):
+        return actions
+    
     for action in game_state.possible_actions:
         if isinstance(action, dict) and 'MoveArmies' in action:
             move_action = action['MoveArmies']

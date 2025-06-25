@@ -153,6 +153,15 @@ Always include ALL required parameters for each function.
 
     def _create_prompt(self, game_state: GameState) -> str:
         """Create a simplified, phase-specific prompt focused on function calling."""
+        # Check if we have a focused prompt from the Reporter Agent
+        if hasattr(self, '_current_focused_prompt') and self._current_focused_prompt:
+            # Use the focused prompt from Reporter Agent
+            focused_prompt = self._current_focused_prompt
+            # Clear the focused prompt after using it
+            self._current_focused_prompt = None
+            return focused_prompt
+        
+        # Fallback to original prompt generation if no focused prompt is available
         my_player = game_state.players.get(self.name)
         if not my_player:
             return "Error: Could not find myself in the game state."

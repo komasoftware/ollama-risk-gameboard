@@ -9,6 +9,7 @@ import re
 import logging
 from typing import List, Dict, Optional, Any
 from .risk_api import RiskAPIClient, GameState, GamePhase
+from .reporter_agent import ReporterAgent
 from datetime import datetime
 
 # Configure logging to write to file only, not terminal
@@ -50,6 +51,8 @@ class GameOrchestrator:
         self.risk_client = RiskAPIClient()
         self.game_log = []
         self.game_config_summary = game_config_summary or {}
+        # Initialize Reporter Agent for focused prompts and failure analysis
+        self.reporter_agent = ReporterAgent()
     
     async def start_game(self) -> Dict[str, Any]:
         self.game_log = []
@@ -177,10 +180,13 @@ class GameOrchestrator:
                 logger.info(f"{agent.name} has no more armies to place.")
                 break
             
-            # Log thinking process (prompt summary) to file only
-            if hasattr(agent, '_create_prompt'):
-                prompt = agent._create_prompt(game_state)
-                logger.info(f"{agent.name} REINFORCE prompt: {prompt[:500]}{'...' if len(prompt) > 500 else ''}")
+            # Use Reporter Agent to generate focused prompt
+            game_state = self.risk_client.get_game_state()
+            focused_prompt = self.reporter_agent.generate_focused_prompt(agent.name, game_state, GamePhase.REINFORCE)
+            logger.info(f"{agent.name} REINFORCE focused prompt: {focused_prompt[:500]}{'...' if len(focused_prompt) > 500 else ''}")
+            
+            # Store the focused prompt for the agent to use
+            agent._current_focused_prompt = focused_prompt
             
             result = await agent.take_turn(None)  # Agent will fetch its own state
             print(f"\n*** {agent.name} LLM FULL RESPONSE in REINFORCE ***\n{result}\n*** END LLM RESPONSE ***\n")
@@ -203,7 +209,7 @@ class GameOrchestrator:
                 action_successful = True
                 retry_count = 0  # Reset retry count on success
             
-            # Check for failed actions (error messages)
+            # Check for failed actions (error messages) and analyze with Reporter Agent
             if ("error" in result.lower() or 
                 "invalid" in result.lower() or 
                 "must" in result.lower() or
@@ -211,6 +217,12 @@ class GameOrchestrator:
                 "must trade exactly 3 cards" in result.lower()):
                 retry_count += 1
                 logger.warning(f"{agent.name} made invalid action (attempt {retry_count}/{max_retries}): {result}")
+                
+                # Use Reporter Agent to analyze the failure and provide feedback
+                failure_analysis = self.reporter_agent.analyze_function_call_failure(
+                    agent.name, GamePhase.REINFORCE, result, "Function call failed"
+                )
+                logger.info(f"{agent.name} failure analysis: {failure_analysis}")
                 
                 # If we've tried too many times, advance phase
                 if retry_count >= max_retries:
@@ -254,10 +266,13 @@ class GameOrchestrator:
                 self.risk_client.advance_phase()
                 break
             
-            # Log thinking process (prompt summary) to file only
-            if hasattr(agent, '_create_prompt'):
-                prompt = agent._create_prompt(game_state)
-                logger.info(f"{agent.name} ATTACK prompt: {prompt[:500]}{'...' if len(prompt) > 500 else ''}")
+            # Use Reporter Agent to generate focused prompt
+            game_state = self.risk_client.get_game_state()
+            focused_prompt = self.reporter_agent.generate_focused_prompt(agent.name, game_state, GamePhase.ATTACK)
+            logger.info(f"{agent.name} ATTACK focused prompt: {focused_prompt[:500]}{'...' if len(focused_prompt) > 500 else ''}")
+            
+            # Store the focused prompt for the agent to use
+            agent._current_focused_prompt = focused_prompt
             
             result = await agent.take_turn(None)  # Agent will fetch its own state
             print(f"\n*** {agent.name} LLM FULL RESPONSE in ATTACK ***\n{result}\n*** END LLM RESPONSE ***\n")
@@ -293,10 +308,13 @@ class GameOrchestrator:
                 self.risk_client.advance_phase()
                 break
             
-            # Log thinking process (prompt summary) to file only
-            if hasattr(agent, '_create_prompt'):
-                prompt = agent._create_prompt(game_state)
-                logger.info(f"{agent.name} FORTIFY prompt: {prompt[:500]}{'...' if len(prompt) > 500 else ''}")
+            # Use Reporter Agent to generate focused prompt
+            game_state = self.risk_client.get_game_state()
+            focused_prompt = self.reporter_agent.generate_focused_prompt(agent.name, game_state, GamePhase.FORTIFY)
+            logger.info(f"{agent.name} FORTIFY focused prompt: {focused_prompt[:500]}{'...' if len(focused_prompt) > 500 else ''}")
+            
+            # Store the focused prompt for the agent to use
+            agent._current_focused_prompt = focused_prompt
             
             result = await agent.take_turn(None)  # Agent will fetch its own state
             print(f"\n*** {agent.name} LLM FULL RESPONSE in FORTIFY ***\n{result}\n*** END LLM RESPONSE ***\n")
@@ -306,12 +324,19 @@ class GameOrchestrator:
             if re.search(r"fortify\s*\(", result, re.IGNORECASE) or 'ollama.fortify' in result.lower() or 'fortify' in result.lower() and 'function calling' not in result.lower() and 'executed actions' not in result.lower():
                 print(f"\n[WARNING] {agent.name} output a text-based function call. Re-prompting with direct instruction.\n")
                 logger.warning(f"{agent.name} output a text-based function call. Re-prompting.")
+                
+                # Use Reporter Agent to analyze the failure
+                failure_analysis = self.reporter_agent.analyze_function_call_failure(
+                    agent.name, GamePhase.FORTIFY, result, "Text-based function call detected"
+                )
+                logger.info(f"{agent.name} failure analysis: {failure_analysis}")
+                
                 # Minimal direct instruction
                 direct_prompt = "IMPORTANT: You must use the function calling mechanism. DO NOT write function calls as text. Try again."
-                if hasattr(agent, '_create_prompt'):
-                    prompt = agent._create_prompt(game_state)
-                    prompt += f"\n{direct_prompt}\n"
-                    logger.info(f"{agent.name} FORTIFY fallback prompt: {prompt[:500]}{'...' if len(prompt) > 500 else ''}")
+                focused_prompt += f"\n{direct_prompt}\n"
+                agent._current_focused_prompt = focused_prompt
+                logger.info(f"{agent.name} FORTIFY fallback prompt: {focused_prompt[:500]}{'...' if len(focused_prompt) > 500 else ''}")
+                
                 # Re-ask the agent
                 result = await agent.take_turn(None)
                 print(f"\n*** {agent.name} LLM FULL RESPONSE in FORTIFY (RETRY) ***\n{result}\n*** END LLM RESPONSE ***\n")
@@ -350,10 +375,13 @@ class GameOrchestrator:
                 self.risk_client.advance_phase()
                 break
             
-            # Log thinking process (prompt summary) to file only
-            if hasattr(agent, '_create_prompt'):
-                prompt = agent._create_prompt(game_state)
-                logger.info(f"{agent.name} MOVE ARMIES prompt: {prompt[:500]}{'...' if len(prompt) > 500 else ''}")
+            # Use Reporter Agent to generate focused prompt
+            game_state = self.risk_client.get_game_state()
+            focused_prompt = self.reporter_agent.generate_focused_prompt(agent.name, game_state, GamePhase.MOVE_ARMIES)
+            logger.info(f"{agent.name} MOVE ARMIES focused prompt: {focused_prompt[:500]}{'...' if len(focused_prompt) > 500 else ''}")
+            
+            # Store the focused prompt for the agent to use
+            agent._current_focused_prompt = focused_prompt
             
             result = await agent.take_turn(None)  # Agent will fetch its own state
             print(f"\n*** {agent.name} LLM FULL RESPONSE in MOVE ARMIES ***\n{result}\n*** END LLM RESPONSE ***\n")
@@ -369,6 +397,13 @@ class GameOrchestrator:
                 "fortified" in result.lower() and game_state.phase.value == "movearmies"):
                 retry_count += 1
                 logger.warning(f"{agent.name} made invalid move armies action (attempt {retry_count}/{max_retries}): {result}")
+                
+                # Use Reporter Agent to analyze the failure
+                failure_analysis = self.reporter_agent.analyze_function_call_failure(
+                    agent.name, GamePhase.MOVE_ARMIES, result, "Invalid action in move armies phase"
+                )
+                logger.info(f"{agent.name} failure analysis: {failure_analysis}")
+                
                 if retry_count >= max_retries:
                     logger.error(f"{agent.name} exceeded max retries in move armies phase. Advancing to next phase.")
                     self.risk_client.advance_phase()

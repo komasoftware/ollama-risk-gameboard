@@ -3,55 +3,351 @@ description:
 globs: 
 alwaysApply: true
 ---
-# AI Agents Playing Risk - Cursor Development Rules
+# AI Agents Playing Risk - Project Documentation
 
 ## 📜 Project Overview
 
-This project focuses exclusively on developing AI agents that play the classic board game Risk against each other. The following components are **external dependencies** and are not to be modified:
+This project develops **AI agents that play the classic board game Risk against each other** using Ollama's function calling capabilities. The system consists of:
+
+### **Core Components:**
+- **AI Agent System** (Python) - The main focus of this repository
+- **Risk API Server** (Rust) - External dependency providing game logic
+- **Risk UI** (React) - External dependency for game visualization
+
+### **External Dependencies (Do Not Modify):**
 - **Risk API Server**: Rust-based REST API running on port 8000 (cloned from https://github.com/Krilecy/risk-board_game-server)
 - **Risk UI**: React-based frontend for visualization (cloned from https://github.com/Krilecy/risk-ui)
 
-The only code to be developed and maintained in this repository is the AI agent logic and orchestration.
+### **This Repository Focus:**
+- AI agent implementations and orchestration
+- Function calling integration with Ollama
+- Multi-agent game management
+- Strategic gameplay development
 
 ## 🎯 Core Goals
 
-1. **AI Agent Development**: Create intelligent agents that can play Risk autonomously by interacting with the Risk API
-2. **Function Calling Integration**: Use Ollama (with function calling) to allow agents to make API calls to the Risk server
-3. **Multi-Agent Competition**: Enable multiple AI agents to play against each other
+1. **AI Agent Development**: Create intelligent agents that can play Risk autonomously
+2. **Function Calling Integration**: Use Ollama (with function calling) for API interactions
+3. **Multi-Agent Competition**: Enable 2-6 AI agents to play against each other
 4. **Strategic Gameplay**: Develop agents with different strategies and personalities
-5. **Observable Gameplay**: Use the existing UI to visualize AI agent games (no changes to UI code)
+5. **Observable Gameplay**: Use the existing UI to visualize AI agent games
 
 ## 🏗️ Project Architecture
 
-### Directory Structure
+### **Directory Structure**
 ```
 risk/
 ├── agents/                    # AI agent implementations and orchestration
-├── risk-board_game-server/    # Risk API server (external, unchanged)
-├── Risk-UI/                   # React frontend (external, unchanged)
+│   ├── simple_agent.py       # Main agent implementation with strategies
+│   ├── ollama_client.py      # Ollama integration and function calling
+│   ├── game_orchestrator.py  # Multi-agent game management
+│   ├── risk_api.py           # Risk API client and data structures
+│   └── risk_rules.py         # Game rule validation and action generation
+├── risk-board_game-server/   # Risk API server (external, unchanged)
+├── Risk-UI/                  # React frontend (external, unchanged)
+├── main.py                   # Main entry point and game setup
+├── game_config.json          # Default game configuration
+└── custom_players.json       # Custom player configurations
 ```
 
-### Key Components (in this repo)
+### **Key Components**
 
-1. **Agent Framework**: Base classes and logic for AI agents
-2. **Strategy System**: Pluggable strategies for different playing styles
-3. **Game Orchestrator**: Manages multi-agent games and turn flow
-4. **Ollama Integration**: Function calling definitions for Risk API
+#### **1. Agent System**
+- **SimpleAgent**: Base agent with configurable strategies
+- **AggressiveAgent**: Attack-focused strategy
+- **DefensiveAgent**: Defense-focused strategy
 
-## 🤖 AI Agent Design Principles
+#### **2. Function Calling Integration**
+- **OllamaAgentClient**: Handles Ollama API calls with function calling
+- **Function Definitions**: Risk API function schemas
+- **Error Handling**: Robust error handling and retry logic
 
-- **Modular Design**: Separate strategy, personality, and decision-making logic
-- **Function Calling**: Use Ollama's function calling for API interactions
-- **State Awareness**: Agents maintain awareness of game state and history
-- **Strategy Patterns**: Implement different strategic approaches (aggressive, defensive, opportunistic)
+#### **3. Game Orchestration**
+- **GameOrchestrator**: Manages multi-agent games and turn flow
+- **Phase Management**: Reinforce → Attack → Fortify → Move Armies
+- **State Management**: Fresh game state for each decision
 
-## 🔧 Technical Requirements
+## 🎮 Risk Game Rules
 
-- **Language**: Python (better Ollama integration, official client support)
-- **Ollama Model**: Use a model that supports function calling (e.g., llama3.2)
-- **Function Definitions**: Define clear function schemas for Risk API calls
-- **Error Handling**: Robust error handling for API failures and model responses
-- **Performance**: Optimize for reasonable response times during gameplay
+### **Game Setup**
+- **Players**: 2-6 players
+- **Territories**: 42 territories across 6 continents
+- **Initial Armies**: Varies by player count (typically 20-35 per player)
+- **Victory Condition**: Control all territories (eliminate all other players)
+
+### **Game Phases & Turn Flow**
+
+#### **1. Reinforce Phase**
+- **Base Reinforcements**: `max(territories_owned / 3, 3)` armies
+- **Continent Bonuses**: +2 to +7 armies for controlling entire continents
+- **Card Trading**: Trade 3 cards for bonus armies (see Card System)
+- **Possible Actions**: `Reinforce` actions for each territory, `EndPhase` to advance
+- **API Actions**: `reinforce()`, `trade_cards()`, `advance_phase()` (calls EndPhase)
+
+#### **2. Attack Phase**
+- **Attack Rules**: Attack from territories with >1 army to adjacent enemy territories
+- **Dice Rolling**: 1-3 dice for attacker, 1-2 dice for defender
+- **Conquest**: If defender loses all armies, territory is conquered
+- **Possible Actions**: `Attack` actions for valid attacks, `EndPhase` to advance
+- **API Actions**: `attack()`, `advance_phase()` (calls EndPhase)
+
+#### **3. Fortify Phase**
+- **Movement**: Move armies between connected territories you control
+- **Connection**: Territories must be connected via your controlled territories
+- **Restrictions**: Must leave at least 1 army in source territory
+- **Possible Actions**: `Fortify` actions for valid moves, `EndPhase` to advance
+- **API Actions**: `fortify()`, `advance_phase()` (calls EndPhase)
+
+#### **4. Move Armies Phase** (After Conquest)
+- **Trigger**: Automatically after successful territory conquest
+- **Movement**: Move armies from attacking territory to conquered territory
+- **Minimum**: Must move at least the number of dice used in attack
+- **Possible Actions**: `MoveArmies` action with specific parameters
+- **API Actions**: `move_armies()`
+
+### **Important API Behavior**
+
+#### **Player Identification**
+- **Current Player**: API returns `"Player 1"`, `"Player 2"`, etc. (strings)
+- **Player IDs**: Must be converted to integers (0, 1, 2, etc.) for API calls
+- **Mapping**: `"Player 1"` → `0`, `"Player 2"` → `1`, etc.
+
+#### **Phase Advancement**
+- **API Endpoint**: `POST /advance_phase` 
+- **Internal Action**: API calls `EndPhase` action internally
+- **Validation**: Only available when `"EndPhase"` appears in possible_actions
+- **Required**: Must complete all required actions before advancing
+
+#### **Possible Actions Structure**
+```json
+{
+  "possible_actions": [
+    {"Reinforce": {"territory": "Alaska", "max_armies": 3}},
+    {"Attack": {"from": "Alaska", "to": "Northwest Territory", "max_dice": 2}},
+    {"Fortify": {"from": "Quebec", "to": "Ontario", "max_armies": 2}},
+    {"MoveArmies": {"from": "Alaska", "to": "Northwest Territory", "max_armies": 2}},
+    "EndPhase"
+  ]
+}
+```
+
+#### **Game State Structure**
+```json
+{
+  "game_state": {
+    "current_player": "Player 1",
+    "current_phase": null,  // API doesn't expose phase name
+    "reinforcement_armies": 3,
+    "players": [
+      {
+        "id": 0,
+        "name": "Bob",
+        "territories": ["Alaska", "Quebec", ...],
+        "armies": {"Alaska": 5, "Quebec": 3, ...},
+        "cards": []
+      }
+    ],
+    "board": {
+      "territories": {
+        "Alaska": {
+          "adjacent_territories": ["Northwest Territory", "Alberta", "Kamchatka"]
+        }
+      },
+      "continents": {
+        "North America": {
+          "territories": ["Alaska", "Northwest Territory", ...],
+          "bonus_armies": 5
+        }
+      }
+    },
+    "possible_actions": [...],
+    "conquered_territory": false,
+    "game_over": false
+  }
+}
+```
+
+### **Continent System**
+| Continent | Territories | Bonus Armies |
+|-----------|-------------|--------------|
+| North America | 9 | +5 |
+| South America | 4 | +2 |
+| Europe | 7 | +5 |
+| Africa | 6 | +3 |
+| Asia | 12 | +7 |
+| Australia | 4 | +2 |
+
+### **Card System**
+
+#### **Card Types:**
+- **Infantry** (♠️) - Territory cards
+- **Cavalry** (♣️) - Territory cards  
+- **Artillery** (♥️) - Territory cards
+- **Joker** (🃏) - Can substitute for any card type
+
+#### **Getting Cards:**
+- **Conquest Reward**: Receive 1 card when conquering at least 1 territory
+- **No Starting Cards**: Players start with 0 cards
+- **Maximum Cards**: Players can hold unlimited cards
+
+#### **Trading Cards for Armies:**
+**Valid Trading Combinations:**
+1. **Three of a Kind:**
+   - 3 Infantry = 4 armies
+   - 3 Cavalry = 6 armies  
+   - 3 Artillery = 8 armies
+
+2. **One of Each:**
+   - 1 Infantry + 1 Cavalry + 1 Artillery = 10 armies
+
+3. **With Jokers:**
+   - Jokers can substitute for any card type
+   - Any valid 3-card combination with jokers = 10 armies
+
+#### **Territory Bonus:**
+- When trading cards, if one traded card matches a territory you own
+- **+2 bonus armies** automatically placed on that territory
+
+#### **Trading Rules:**
+- Must trade exactly 3 cards
+- Can only trade during Reinforce Phase
+- Cards are discarded after trading
+- Can trade multiple times per turn if you have enough cards
+
+## 🔌 Risk API Endpoints
+
+### **Game State**
+- `GET /game-state` - Retrieve current game state with possible actions
+- `GET /` - API documentation
+
+### **Game Actions**
+- `POST /reinforce` - Add armies to a territory (only during Reinforce phase)
+- `POST /bulk_reinforce` - Add armies to multiple territories
+- `POST /attack` - Execute an attack between territories (only during Attack phase)
+- `POST /fortify` - Move armies between connected territories (only during Fortify phase)
+- `POST /move_armies` - Move armies after conquering a territory (only during Move Armies phase)
+- `POST /trade_cards` - Trade in cards for additional armies (only during Reinforce phase)
+- `POST /advance_phase` - Progress to the next phase (calls EndPhase internally)
+- `POST /new-game` - Start a new game with optional configuration
+
+### **Important API Behavior**
+
+#### **Action Validation**
+- **All actions are validated against `possible_actions`**
+- **Actions can only be performed during their respective phases**
+- **`advance_phase` only works when `"EndPhase"` is in possible_actions**
+- **API returns 400/422 errors for invalid actions**
+
+#### **Player ID Handling**
+- **API expects integer player IDs (0, 1, 2, ...)**
+- **Game state returns string player names (`"Player 1"`, `"Player 2"`, ...)**
+- **Must convert: `"Player 1"` → `0`, `"Player 2"` → `1`, etc.**
+
+### **API Request Formats**
+
+#### **Reinforce**
+```json
+{
+  "player_id": 0,
+  "territory": "Alaska",
+  "num_armies": 3
+}
+```
+**Validation**: Territory must be in `Reinforce` possible_actions
+
+#### **Attack**
+```json
+{
+  "player_id": 0,
+  "from_territory": "Alaska",
+  "to_territory": "Northwest Territory",
+  "num_dice": 2,
+  "repeat": false
+}
+```
+**Validation**: Attack must be in `Attack` possible_actions
+
+#### **Fortify**
+```json
+{
+  "player_id": 0,
+  "from_territory": "Quebec",
+  "to_territory": "Ontario",
+  "num_armies": 2
+}
+```
+**Validation**: Fortify must be in `Fortify` possible_actions
+
+#### **Move Armies**
+```json
+{
+  "player_id": 0,
+  "from_territory": "Alaska",
+  "to_territory": "Northwest Territory",
+  "num_armies": 2
+}
+```
+**Validation**: MoveArmies must be in possible_actions after conquest
+
+#### **Trade Cards**
+```json
+{
+  "player_id": 0,
+  "card_indices": [0, 1, 2]
+}
+```
+**Validation**: Only during Reinforce phase, must have 3+ cards
+
+#### **Advance Phase**
+```json
+{
+  "player_id": 0
+}
+```
+**Validation**: Only when `"EndPhase"` is in possible_actions
+
+#### **New Game**
+```json
+{
+  "config_file": "game_config.json",
+  "num_players": 3
+}
+```
+
+## 🤖 AI Agent Implementation
+
+### **Current Implementation Status**
+
+#### **✅ Implemented Features**
+- Basic Risk API client with function calling
+- Ollama integration with llama3.2 model
+- Base agent framework with strategy patterns
+- Simple, aggressive, and defensive agent strategies
+- Game orchestration and tournament management
+- Basic reinforce, attack, fortify, and move armies functionality
+- Game state parsing and analysis
+- Error handling and timeout management
+- Card trading system with validation
+- Continent information and strategic guidance
+
+### **Function Calling Integration**
+
+#### **Ollama Function Definitions**
+```python
+functions = [
+    FunctionDefinition(
+        name="reinforce",
+        description="Place armies on your territories",
+        parameters={...}
+    ),
+    FunctionDefinition(
+        name="attack", 
+        description="Attack enemy territories",
+        parameters={...}
+    ),
+    # ... other functions
+]
+```
 
 ## 🚫 Important Workflow Rules
 
@@ -60,120 +356,32 @@ risk/
 - **User controls execution**: The user should be the one to decide when to run games and test changes
 - **Provide clear next steps**: After making changes, explain what the user can do to test them, but don't execute without permission
 
-## 📋 Development Guidelines
+## 🧑‍🤝‍🧑 Custom Player Names
 
-- **Separation of Concerns**: Keep agent logic and orchestration separate
-- **Testable Design**: Write unit tests for agent strategies and decision logic
-- **Documentation**: Document agent strategies and decision-making processes
-- **Type Hints**: Use Python type hints for better code clarity
+- You can set custom player names by providing a custom game configuration file (JSON) and passing its path to the `/new-game` endpoint using the `config_file` parameter.
+- The config file must define the `players` array, and each player object must have a `name` field.
+- Example config snippet:
 
-## 🧪 Testing Strategy
+```json
+{
+  "players": [
+    { "id": 0, "name": "Alice", ... },
+    { "id": 1, "name": "Bob", ... }
+  ],
+  ...
+}
+```
 
-- **Agent Strategies**: Test individual strategy components
-- **API Integration**: Mock API calls for testing
-- **Decision Logic**: Test agent decision-making with known game states
-- **Full Game Simulation**: Test complete games between agents
+- To start a game with these names, POST to `/new-game`:
 
-## 🔒 Security & Best Practices
+```bash
+curl -X POST http://localhost:8000/new-game \
+  -H "Content-Type: application/json" \
+  -d '{"config_file": "your_custom_config.json"}'
+```
 
-- **Input Validation**: Validate all agent inputs before API calls
-- **Error Handling**: Graceful handling of API errors and timeouts
-- **Type Hints**: Use Python type hints for better code clarity
-- **Logging**: Comprehensive logging for debugging and analysis
-
-## 📚 Documentation Requirements
-
-- **Agent Strategies**: Document each strategy's approach and reasoning
-- **API Integration**: Document function calling patterns and error handling
-- **Setup Guide**: Clear setup instructions for the agent system
-
-## 🎮 Game Features to Implement
-
-- **Complete Risk Rules**: Full implementation of Risk game mechanics (via API)
-- **Multi-Player Support**: Support for 2-6 AI agents
-- **Turn Management**: Proper turn order and phase management
-- **Victory Conditions**: Proper win condition detection
-- **Tournament Mode**: Automated tournaments between agents
-- **Strategy Analysis**: Post-game analysis of agent decisions
-
-## 🔄 Iteration & Improvement
-
-- **Strategy Refinement**: Regular updates to agent strategies based on performance
-- **Performance Optimization**: Ongoing optimization of response times and efficiency
-- **Feature Addition**: Gradual addition of advanced agent features
-
-## 📋 TODO: Missing Game Elements
-
-### 🔴 High Priority TODOs
-
-#### 1. Card System Implementation
-- **TODO**: Implement card tracking and management
-  - Add card information to game state parsing
-  - Create function calling for `trade_cards` endpoint
-  - Implement card trading logic in agents
-  - Add card-based victory condition tracking (e.g., "conquer Africa")
-  - Update agents to consider card objectives in strategy
-
-#### 2. New Game Creation
-- **TODO**: Implement new game creation functionality
-  - Add function calling for `/new-game` endpoint
-  - Create game configuration options (number of players, map settings)
-  - Implement dynamic player assignment
-  - Add support for different game modes
-
-#### 3. Complete Game Phase Management
-- **TODO**: Implement all game phases properly
-  - **Reinforce Phase**: ✅ Implemented (basic)
-  - **Attack Phase**: ✅ Implemented (basic)
-  - **Fortify Phase**: ⚠️ Partially implemented - needs improvement
-  - **Card Trading**: ❌ Not implemented
-  - **Phase Advancement**: ⚠️ Basic implementation needs enhancement
-
-#### 4. Advanced Movement and Combat
-- **TODO**: Implement advanced game mechanics
-  - **Bulk Reinforce**: Add support for `/bulk_reinforce` endpoint
-  - **Move Armies**: Implement `/move_armies` after successful attacks
-  - **Territory Connections**: Proper fortification logic based on territory adjacency
-  - **Combat Resolution**: Enhanced attack probability calculations
-
-### 🟡 Medium Priority TODOs
-
-#### 5. Enhanced Agent Strategies
-- **TODO**: Improve agent decision-making
-  - **Card-Based Strategy**: Agents should consider their card objectives
-  - **Territory Control**: Better understanding of territory value and connections
-  - **Risk Assessment**: More sophisticated attack/defense calculations
-  - **Long-term Planning**: Multi-turn strategic planning
-
-#### 6. Game State Analysis
-- **TODO**: Better game state understanding
-  - **Territory Analysis**: Calculate territory values and strategic importance
-  - **Player Position Analysis**: Understand relative player strengths
-  - **Victory Probability**: Calculate win probabilities based on current state
-  - **Resource Optimization**: Better army placement and card trading
-
-#### 7. Multi-Game Management
-- **TODO**: Enhanced tournament and game management
-  - **Dynamic Game Creation**: Create new games with different configurations
-  - **Player Rotation**: Rotate agents between games
-  - **Statistics Tracking**: Track performance across multiple games
-  - **Tournament Brackets**: Implement proper tournament structures
-
-### 🟢 Low Priority TODOs
-
-#### 8. Advanced Features
-- **TODO**: Future enhancements
-  - **Learning from Games**: Agents learn from previous game outcomes
-  - **Strategy Evolution**: Agents adapt strategies based on opponent behavior
-  - **Custom Maps**: Support for different Risk map configurations
-  - **Replay Analysis**: Detailed analysis of game replays
-
-#### 9. Performance and Monitoring
-- **TODO**: System improvements
-  - **Response Time Optimization**: Faster agent decision-making
-  - **Memory Management**: Better memory usage for long games
-  - **Error Recovery**: More robust error handling and recovery
-  - **Analytics Dashboard**: Real-time game monitoring
+- The config file must be accessible to the server (in its working directory).
+- **You cannot set player names directly via a parameter in the `/new-game` JSON payload.**
 
 ## 🎯 Current Implementation Status
 
@@ -186,40 +394,6 @@ risk/
 - Basic reinforce and attack functionality
 - Game state parsing and analysis
 - Error handling and timeout management
-
-### ⚠️ Partially Implemented Features
-- Fortify phase (basic implementation)
-- Phase advancement (basic implementation)
-- Game state analysis (basic territory understanding)
-
-### ❌ Missing Features
-- Card system and trading
-- New game creation with configuration
-- Bulk reinforce functionality
-- Move armies after attacks
-- Card-based victory conditions
-- Advanced strategic planning
-- Multi-game statistics tracking
-
-## 🔧 Development Priorities
-
-### Immediate Next Steps
-1. **Implement card system** - Add card tracking and trading functionality
-2. **Add new game creation** - Enable dynamic game setup with different configurations
-3. **Enhance fortify phase** - Improve territory movement logic
-4. **Add bulk reinforce** - Implement efficient army placement
-
-### Short-term Goals
-1. **Card-based strategies** - Agents consider their card objectives
-2. **Advanced game analysis** - Better territory and position evaluation
-3. **Enhanced error handling** - More robust API interaction
-4. **Performance optimization** - Faster agent decision-making
-
-### Long-term Vision
-1. **Learning agents** - Agents that improve from game experience
-2. **Advanced tournaments** - Sophisticated tournament structures
-3. **Custom configurations** - Support for different game modes
-4. **Analytics platform** - Comprehensive game analysis tools
 
 ## 🧑‍🤝‍🧑 Custom Player Names
 
@@ -303,3 +477,4 @@ curl -X POST http://localhost:8000/trade_cards \
 - **No secret missions** - only territory control victory
 - **No wild cards** - just jokers that substitute for any type
 - **Simplified card system** - focused on army trading rather than objectives 
+
