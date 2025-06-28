@@ -164,13 +164,13 @@ def advance_phase() -> Dict[str, Any]:
 
 @server.tool(
     name="new_game", 
-    description="Start a new game"
+    description="Start a new game with optional configuration and number of players"
 )
-def new_game() -> Dict[str, Any]:
+def new_game(config_file: Optional[str] = None, num_players: Optional[int] = None) -> Dict[str, Any]:
     """Start a new game."""
-    logger.info("[MCP] Starting new game")
+    logger.info(f"[MCP] Starting new game with config_file={config_file}, num_players={num_players}")
     try:
-        success = risk_client.new_game()
+        success = risk_client.new_game(config_file, num_players)
         return {
             "success": success,
             "message": "New game started" if success else "Failed to start new game"

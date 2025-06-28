@@ -98,10 +98,35 @@ class RiskAPIClient:
         response = self.session.post(f"{self.base_url}/advance_phase")
         return response.status_code == 200
     
-    def new_game(self) -> bool:
+    def new_game(self, config_file: Optional[str] = None, num_players: Optional[int] = None) -> bool:
         """Start a new game."""
-        response = self.session.post(f"{self.base_url}/new-game")
-        return response.status_code == 200
+        logger = logging.getLogger(__name__)
+        
+        payload = {}
+        if config_file is not None:
+            payload["config_file"] = config_file
+        if num_players is not None:
+            payload["num_players"] = num_players
+        
+        logger.info(f"[NEW_GAME] Starting new game with payload: {payload}")
+        
+        try:
+            response = self.session.post(f"{self.base_url}/new-game", json=payload)
+            logger.info(f"[NEW_GAME] Response status: {response.status_code}")
+            
+            try:
+                response_text = response.text
+                logger.info(f"[NEW_GAME] Response body: {response_text}")
+            except Exception as e:
+                logger.error(f"[NEW_GAME] Could not decode response body: {e}")
+            
+            success = response.status_code == 200
+            logger.info(f"[NEW_GAME] Request {'SUCCEEDED' if success else 'FAILED'}")
+            return success
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[NEW_GAME] Request failed: {e}")
+            return False
     
     def get_reinforcement_armies(self) -> int:
         """Get the current reinforcement armies directly from the server."""
