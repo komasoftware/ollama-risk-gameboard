@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 server = FastMCP("Risk Game Server")
 
 # Initialize the Risk API client
-risk_client = RiskAPIClient(base_url="https://risk-api-server-441582515789.europe-west4.run.app")
+import os
+risk_api_url = os.getenv('RISK_API_BASE_URL', 'https://risk-api-server-jn3e4lhybq-ez.a.run.app')
+risk_client = RiskAPIClient(base_url=risk_api_url)
 
 @server.tool(
     name="get_game_state", 
