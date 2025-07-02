@@ -29,10 +29,6 @@ EXPOSE 8080
 # Set environment variables
 ENV PORT=8080
 ENV HOST=0.0.0.0
-ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets.json
-ENV GOOGLE_CLOUD_PROJECT=koen-gcompany-demo
-ENV GOOGLE_CLOUD_LOCATION=global
-ENV GOOGLE_GENAI_USE_VERTEXAI=TRUE
 
 # Run the agent
 CMD ["python", "agent_player.py"] 

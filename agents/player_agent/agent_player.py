@@ -31,9 +31,10 @@ logger = logging.getLogger(__name__)
 class RiskADKAgentHTTP:
     
     
-    def __init__(self, name: str = "RiskPlayer", mcp_server_url: str = "https://risk-mcp-server-441582515789.europe-west4.run.app/mcp/stream"):
-        self.name = name
-        self.mcp_server_url = mcp_server_url
+    def __init__(self, name: str = None, mcp_server_url: str = None):
+        # Use environment variables with fallbacks
+        self.name = name or os.environ.get('AGENT_NAME', 'RiskPlayer')
+        self.mcp_server_url = mcp_server_url or os.environ.get('MCP_SERVER_URL', 'https://risk-mcp-server-jn3e4lhybq-ez.a.run.app/mcp/stream')
         self.agent = None
         self.toolset = None
         self.runner = None
@@ -45,19 +46,7 @@ class RiskADKAgentHTTP:
         """Initialize the agent with MCP tools over HTTP"""
         logger.info(f"[INIT] Initializing Risk ADK Agent with MCP server at {self.mcp_server_url}")
         
-        # Set up Google Cloud authentication
-        try:
-            credentials, project = default()
-            logger.info(f"[INIT] Using Google Cloud credentials for project: {project}")
-            logger.info(f"[INIT] GOOGLE_APPLICATION_CREDENTIALS: {os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')}")
-            creds_file = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-            if creds_file and os.path.exists(creds_file):
-                with open(creds_file, 'r') as f:
-                    logger.info(f"[INIT] Credentials content: {f.read()}")
-        except Exception as e:
-            logger.error(f"[INIT] Failed to get Google Cloud credentials: {e}")
-            raise
-        
+       
         # Create MCP toolset for Risk server using HTTP connection
         logger.info(f"[INIT] Creating MCP toolset with URL: {self.mcp_server_url}")
         self.toolset = MCPToolset(
@@ -260,7 +249,7 @@ class PlayerAgentExecutor(AgentExecutor):
 agent_card = AgentCard(
     name='Player Agent',
     description='Handles player actions for Risk game',
-    url='http://localhost:8000/',  # Update to Cloud Run URL after deployment
+    url=os.environ.get('AGENT_CARD_URL', 'http://localhost:8000/'),  # Will be updated to Cloud Run URL after deployment
     version='1.0.0',
     defaultInputModes=['text'],
     defaultOutputModes=['text'],

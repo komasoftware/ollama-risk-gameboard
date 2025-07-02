@@ -1,8 +1,8 @@
-# Security Configuration
+# Player Agent Security Configuration
 
 ## 🔒 Sensitive Values Management
 
-This document outlines the security measures implemented to protect sensitive configuration values in the MCP server deployment.
+This document outlines the security measures implemented to protect sensitive configuration values in the Player Agent deployment.
 
 ## 📋 Changes Made
 
@@ -17,7 +17,10 @@ This document outlines the security measures implemented to protect sensitive co
 - `test-deployment.sh`: Now loads configuration from `.env` file
 
 #### Code
-- `risk_mcp.py`: Now uses `RISK_API_BASE_URL` environment variable
+- `agent_player.py`: Now uses environment variables for configuration
+  - `AGENT_NAME`: Agent name configuration
+  - `MCP_SERVER_URL`: MCP server endpoint URL
+  - `AGENT_CARD_URL`: A2A agent card URL
 
 #### Documentation
 - `README.md`: Updated to reference environment variables instead of hardcoded values
@@ -36,14 +39,20 @@ This document outlines the security measures implemented to protect sensitive co
 - `ARTIFACT_REGISTRY`: Docker registry URL
 
 ### Service URLs (contain project-specific identifiers)
-- `MCP_SERVER_URL`: MCP server endpoint
-- `RISK_API_BASE_URL`: Risk API server endpoint
-- `RISK_API_ALTERNATIVE_URL`: Alternative Risk API endpoint
+- `MCP_SERVER_URL`: MCP server endpoint URL
+- `MCP_SERVER_ALTERNATIVE_URL`: Alternative MCP server endpoint
+- `AGENT_CARD_URL`: A2A agent card URL
 
-### Service Configuration
+### Agent Configuration
 - `SERVICE_NAME`: Cloud Run service name
 - `IMAGE_NAME`: Docker image name
 - `IMAGE_TAG`: Docker image tag
+- `AGENT_NAME`: Agent name for the Risk player
+
+### AI Model Configuration
+- `GEMINI_MODEL`: Gemini model identifier
+- `GOOGLE_GENAI_USE_VERTEXAI`: Vertex AI configuration
+- `GOOGLE_CLOUD_LOCATION`: AI services location
 
 ## 🔧 Setup Instructions
 
@@ -80,6 +89,8 @@ The scripts automatically load environment variables from `.env`:
 - [x] Template file (`env.template`) provided for easy setup
 - [x] Documentation updated to reference environment variables
 - [x] Code updated to use environment variables
+- [x] AI model configuration externalized
+- [x] MCP server URLs externalized
 
 ## 🛡️ Best Practices
 
@@ -88,6 +99,8 @@ The scripts automatically load environment variables from `.env`:
 3. **Rotate sensitive values** regularly
 4. **Limit access** to production environment variables
 5. **Use secrets management** for production deployments
+6. **Secure AI model access** with proper authentication
+7. **Monitor agent interactions** for security issues
 
 ## 🔍 Verification
 
@@ -96,10 +109,31 @@ To verify the security configuration:
 2. Verify no hardcoded sensitive values remain in scripts
 3. Test that scripts load environment variables correctly
 4. Confirm documentation references environment variables
+5. Verify AI model configuration is externalized
+6. Check MCP server URLs are configurable
 
 ## 📞 Support
 
 If you encounter issues with environment configuration:
 1. Check that `.env` file exists and is properly formatted
 2. Verify all required environment variables are set
-3. Ensure scripts have proper permissions to read `.env` 
+3. Ensure scripts have proper permissions to read `.env`
+4. Verify Google Cloud authentication is configured
+5. Check MCP server connectivity
+
+## 🎯 Agent-Specific Security Considerations
+
+### AI Model Security
+- **Gemini Model Access**: Ensure proper authentication for Vertex AI
+- **Model Versioning**: Use specific model versions for reproducibility
+- **Rate Limiting**: Monitor API usage to prevent abuse
+
+### MCP Server Security
+- **Connection Security**: Use HTTPS for all MCP server connections
+- **Authentication**: Implement proper authentication for MCP tools
+- **Input Validation**: Validate all inputs to MCP tools
+
+### A2A Protocol Security
+- **Agent Authentication**: Implement proper agent authentication
+- **Message Validation**: Validate all A2A protocol messages
+- **Rate Limiting**: Implement rate limiting for agent interactions 
