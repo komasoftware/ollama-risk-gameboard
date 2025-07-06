@@ -21,7 +21,6 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.server.apps import A2AStarletteApplication
 from a2a.types import AgentCard, AgentCapabilities, AgentSkill, TaskState, TextPart, TaskStatusUpdateEvent, TaskStatus, Message, Role, Part
 import uvicorn
-import google.auth
 from google.auth import default
 
 # Set up logging
@@ -116,26 +115,42 @@ class RiskADKAgentHTTP:
         logger.info("[INIT] Risk ADK Agent (HTTP) initialized successfully")
    
     
-    async def play_turn(self, player_id: int) -> Dict[str, Any]:
-        """Play a complete turn for the given player"""
-        logger.info(f"[PLAY_TURN] Starting play_turn for player_id={player_id}")
+    async def play_turn(self, player_id: int, persona_description: str = None) -> Dict[str, Any]:
+        """Play exactly one turn for the given player"""
+        
+        # Build persona-specific prompt
+        persona_instruction = ""
+        if persona_description:
+            persona_instruction = f"""
+            PERSONA: {persona_description}
+            
+            Play according to this persona. Your personality and strategy should reflect this description.
+            """
+        
         query = f"""
         You are playing Risk as Player {player_id}. 
         
-        Please play your turn strategically:
-        1. First, get the current game state
-        2. Reinforce your territories with available armies
-        3. Attack enemy territories if possible
-        4. Fortify by moving armies between your connected territories
-        5. Trade cards for bonus armies if you have 3+ cards
-        6. Advance to the next phase when ready
+        {persona_instruction}
         
-        Make your moves one at a time and explain your strategy.
+        CRITICAL INSTRUCTIONS:
+        - Play EXACTLY ONE TURN and then STOP
+        - Do NOT wait for other players or future turns
+        - Do NOT continue playing after completing your turn
+        - If it's not your turn, simply state that and stop
+        
+        TURN EXECUTION:
+        1. First, get the current game state
+        2. Check if it's your turn (current_player should match Player {player_id})
+        3. If it's your turn, play through the phases: Reinforce → Attack → Fortify
+        4. If it's NOT your turn, explain why and stop immediately
+        5. After completing your turn, stop and provide a summary of your strategy
+        
+        Make your moves one at a time and explain your reasoning.
+        STOP after completing your turn - do not continue.
         """
         
         content = types.Content(role='user', parts=[types.Part(text=query)])
         
-        logger.info(f"[PLAY_TURN] About to run agent with session_id={self.session.id}")
         events_async = self.runner.run_async(
             session_id=self.session.id, 
             user_id=self.session.user_id, 
@@ -144,14 +159,10 @@ class RiskADKAgentHTTP:
         
         result = None
         async for event in events_async:
-            logger.info(f"[PLAY_TURN] Event received: {type(event).__name__}")
             if hasattr(event, 'content') and event.content:
-                logger.info(f"[PLAY_TURN] Event content: {event.content}")
                 result = event.content
             elif hasattr(event, 'text') and event.text:
-                logger.info(f"[PLAY_TURN] Event text: {event.text}")
                 result = event.text
-        logger.info(f"[PLAY_TURN] Finished play_turn for player_id={player_id}, result={result}")
         return {
             "player_id": player_id,
             "response": result,
@@ -173,46 +184,66 @@ class PlayerAgentExecutor(AgentExecutor):
     
     async def execute(self, context, event_queue):
         logger.info(f"[EXECUTE] Called with context: {context}, event_queue: {event_queue}")
-        # context.message.parts is a list, so we need to access the first part
-        if context.message.parts and len(context.message.parts) > 0:
-            logger.info(f"[EXECUTE] context.message.parts: {context.message.parts}")
-            first_part = context.message.parts[0]  # Get the first part from the list
-            user_message = first_part.root.text if hasattr(first_part.root, 'text') else None
-            data = getattr(first_part.root, 'data', None)
+        
+        # Extract message content using proper A2A protocol approach
+        user_message = None
+        player_id = None  # Will be extracted from DataPart
+        persona_description = None
+        
+        if context.message.parts:
+            
+            # Iterate through all message parts to find text and data
+            for part in context.message.parts:
+                # Handle TextPart for user message
+                if hasattr(part.root, 'type') and part.root.type == 'text':
+                    if hasattr(part.root, 'text'):
+                        user_message = part.root.text
+                
+                # Handle DataPart for structured parameters
+                elif hasattr(part.root, 'type') and part.root.type == 'data':
+                    if hasattr(part.root, 'data') and isinstance(part.root.data, dict):
+                        data = part.root.data
+                        
+                        # Extract structured parameters
+                        if 'player_id' in data:
+                            player_id = int(data['player_id'])
+                        
+                        if 'persona' in data:
+                            persona_description = data['persona']
+                
+                # Also check if it's a DataPart by kind attribute
+                elif hasattr(part.root, 'kind') and part.root.kind == 'data':
+                    if hasattr(part.root, 'data') and isinstance(part.root.data, dict):
+                        data = part.root.data
+                        
+                        # Extract structured parameters
+                        if 'player_id' in data:
+                            player_id = int(data['player_id'])
+                        
+                        if 'persona' in data:
+                            persona_description = data['persona']
+                
+                # Fallback: try to get text from any part (for backward compatibility)
+                elif hasattr(part.root, 'text') and not user_message:
+                    user_message = part.root.text
         else:
             logger.warning("[EXECUTE] No message parts found in context")
-            user_message = None
-            data = None
             
-        if user_message:
-            logger.info(f"[EXECUTE] play turn with user_message: {user_message}")
+        if user_message and player_id is not None:
             # Initialize the Risk agent if not already done
             if self.risk_agent is None:
-                logger.info("[EXECUTE] Initializing RiskADKAgentHTTP instance")
                 self.risk_agent = RiskADKAgentHTTP()
                 await self.risk_agent.initialize()
             
-            # Extract player_id from message (default to 1)
-            player_id = 1
-            if "player" in user_message.lower():
-                import re
-                match = re.search(r'player\s*(\d+)', user_message, re.IGNORECASE)
-                if match:
-                    player_id = int(match.group(1))
-                    logger.info(f"[EXECUTE] Extracted player_id: {player_id}")
-            
             # Execute the turn
             try:
-                logger.info(f"[EXECUTE] Calling play_turn for player_id={player_id}")
-                result = await self.risk_agent.play_turn(player_id)
-                response = f"Executed turn for Player {player_id}. Result: {result.get('response', 'No response')}"
-                logger.info(f"[EXECUTE] play_turn result: {result}")
+                result = await self.risk_agent.play_turn(player_id, persona_description)
+                response = f"Executed turn for Player {player_id}. Persona: {persona_description or 'Default'}. Result: {result.get('response', 'No response')}"
             except Exception as e:
                 logger.error(f"[EXECUTE] Error executing turn: {e}")
                 response = f"Error executing turn: {str(e)}"
             
             # Send response message using enqueue_event
-            logger.info(f"[EXECUTE] Sending response message: {response}")
             await event_queue.enqueue_event(Message(
                 contextId=context.context_id,
                 messageId=f"response-{context.task_id}",
@@ -220,14 +251,24 @@ class PlayerAgentExecutor(AgentExecutor):
                 role=Role.agent,
                 taskId=context.task_id
             ))
+            
+            # Send task completion event
             await event_queue.enqueue_event(TaskStatusUpdateEvent(
                 taskId=context.task_id,
                 contextId=context.context_id,
                 status=TaskStatus(state=TaskState.completed),
                 final=True
             ))
-        else:
+        elif user_message is None:
             logger.warning("[EXECUTE] user_message is None, input required")
+            await event_queue.enqueue_event(TaskStatusUpdateEvent(
+                taskId=context.task_id,
+                contextId=context.context_id,
+                status=TaskStatus(state=TaskState.input_required),
+                final=False
+            ))
+        elif player_id is None:
+            logger.warning("[EXECUTE] player_id is missing from request")
             await event_queue.enqueue_event(TaskStatusUpdateEvent(
                 taskId=context.task_id,
                 contextId=context.context_id,
@@ -247,19 +288,34 @@ class PlayerAgentExecutor(AgentExecutor):
 
 # --- Agent Card (metadata) ---
 agent_card = AgentCard(
-    name='Player Agent',
-    description='Handles player actions for Risk game',
-    url=os.environ.get('AGENT_CARD_URL', 'http://localhost:8000/'),  # Will be updated to Cloud Run URL after deployment
+    name='Risk Player Agent',
+    description='AI agent for playing Risk board game turns with customizable personas',
+    url=os.environ.get('AGENT_CARD_URL', 'http://localhost:8080/'),
     version='1.0.0',
-    defaultInputModes=['text'],
+    defaultInputModes=['text', 'data'],
     defaultOutputModes=['text'],
-    capabilities=AgentCapabilities(streaming=False),
+    capabilities=AgentCapabilities(streaming=True),
     skills=[
         AgentSkill(
             id='play_turn',
             name='Play Turn',
-            description='Plays a turn in the Risk game',
-            tags=['risk', 'game', 'turn']
+            description='Plays a single turn in the Risk game for a specific player with a given persona',
+            inputModes=['text', 'data'],
+            outputModes=['text'],
+            tags=['risk', 'game', 'turn', 'strategy'],
+            streaming=True,
+            parameters={
+                'player_id': {
+                    'type': 'integer',
+                    'description': 'The player ID (1, 2, or 3) for whom to play the turn',
+                    'required': True
+                },
+                'persona': {
+                    'type': 'string',
+                    'description': 'Description of the player persona/strategy (e.g., "aggressive", "defensive", "balanced")',
+                    'required': False
+                }
+            }
         ),
     ],
 )

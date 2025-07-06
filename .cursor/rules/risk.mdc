@@ -1,0 +1,279 @@
+---
+alwaysApply: true
+---
+# Risk Agentic Web Platform - Cursor Rules
+
+## 🎯 Project Overview
+
+This is a sophisticated agentic web platform demonstrating AI agents playing Risk using:
+- **Google ADK (Agent Development Kit)** with Gemini 2.5 Flash Lite
+- **MCP (Model Context Protocol)** for tool calling
+- **A2A (Agent-to-Agent)** protocol for agent communication
+- **Cloud Run** for serverless deployment
+- **Artifact Registry** for Docker image storage
+
+## 🏗️ Project Structure
+
+```
+risk/
+├── agents/
+│   └── player_agent/
+│       ├── agent_player.py      # ADK agent with Gemini integration
+│       ├── requirements.txt     # Python dependencies
+│       └── Dockerfile          # Agent containerization
+├── mcp-server/
+│   ├── risk_mcp.py             # FastMCP server implementation
+│   ├── risk_api.py             # Risk API HTTP client
+│   ├── requirements.txt        # MCP server dependencies
+│   └── Dockerfile              # MCP server containerization
+├── testdata/                   # Generated test scenarios
+├── game_config.json           # Risk game configuration (42 territories, 6 continents)
+├── generate_testdata.py       # Automated test data generator
+├── Dockerfile                 # Main application containerization
+└── rules/
+    └── .cursorrules           # This file - project-specific rules
+```
+
+## 🌐 Actual Deployed Services & URLs
+
+### Cloud Run Services (europe-west4)
+- **player-agent**: `https://player-agent-jn3e4lhybq-ez.a.run.app`
+- **risk-mcp-server**: `https://risk-mcp-server-jn3e4lhybq-ez.a.run.app`
+- **risk-api-server**: `https://risk-api-server-jn3e4lhybq-ez.a.run.app`
+
+### MCP Server Endpoints
+- **MCP Stream**: `https://risk-mcp-server-jn3e4lhybq-ez.a.run.app/mcp/stream`
+- **Risk API Base**: `https://risk-api-server-jn3e4lhybq-ez.a.run.app`
+
+### Google Cloud Resources
+- **Project**: `koen-gcompany-demo`
+- **Region**: `europe-west4`
+- **Artifact Registry**: `europe-west4-docker.pkg.dev/koen-gcompany-demo/risk`
+
+## 🐳 Docker Images (Artifact Registry)
+
+### Image References
+```bash
+# MCP Server
+europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-mcp-server:latest
+
+# ADK Agent
+europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/player-agent:latest
+
+# Risk API Server
+europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-board-game-server:latest
+```
+
+### Build & Push Commands
+```bash
+# Build images
+docker build -t europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-mcp-server:latest mcp-server/
+docker build -t europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/player-agent:latest agents/player_agent/
+docker build -t europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-board-game-server:latest .
+
+# Push to Artifact Registry
+docker push europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-mcp-server:latest
+docker push europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/player-agent:latest
+docker push europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-board-game-server:latest
+```
+
+## 🔧 Environment Variables
+
+### Required Environment Variables
+```bash
+# Google Cloud Authentication
+export GOOGLE_APPLICATION_CREDENTIALS="path/to/your/credentials.json"
+
+# MCP Server Configuration
+export MCP_SERVER_URL="https://risk-mcp-server-jn3e4lhybq-ez.a.run.app/mcp/stream"
+
+# Gemini Model Configuration
+export GEMINI_MODEL="gemini-2.5-flash-lite-preview-06-17"
+
+# Risk API Configuration
+export RISK_API_BASE_URL="https://risk-api-server-jn3e4lhybq-ez.a.run.app"
+```
+
+## 🎮 Game Configuration
+
+### Risk Game Structure
+- **42 Territories** across 6 continents
+- **6 Continents**: North America, South America, Europe, Africa, Asia, Australia
+- **Game Phases**: Reinforce → Attack → Fortify → Move Armies
+- **Players**: 3 players (Bob, Alice, Jake) with initial territories
+
+### Key Game Files
+- `game_config.json`: Complete game state configuration
+- `generate_testdata.py`: Automated scenario generation
+- `testdata/`: Generated test scenarios for development
+
+## 🛠️ Development Best Practices
+
+### 1. **Always Verify Online Documentation**
+- **Google ADK**: https://developers.google.com/adk
+- **MCP Protocol**: https://modelcontextprotocol.io/
+- **A2A Protocol**: https://a2a.dev/
+- **Cloud Run**: https://cloud.google.com/run/docs
+- **Artifact Registry**: https://cloud.google.com/artifact-registry/docs
+
+### 2. **Code Quality Standards**
+- **Type Hints**: Always use type hints in Python code
+- **Error Handling**: Comprehensive exception handling with logging
+- **Logging**: Use structured logging with appropriate levels
+- **Documentation**: JSDoc-style comments for all public APIs
+
+### 3. **MCP Tool Development**
+```python
+@server.tool(
+    name="tool_name", 
+    description="Clear description of tool functionality"
+)
+def tool_function(param1: str, param2: int) -> Dict[str, Any]:
+    """Tool implementation with proper error handling."""
+    try:
+        # Implementation
+        return {"success": True, "result": result}
+    except Exception as e:
+        logger.error(f"Tool error: {e}")
+        return {"success": False, "error": str(e)}
+```
+
+### 4. **ADK Agent Patterns**
+```python
+# Initialize with proper error handling
+async def initialize(self):
+    try:
+        self.toolset = MCPToolset(
+            connection_params=StreamableHTTPConnectionParams(
+                url=self.mcp_server_url,
+                headers={"accept": "application/json, text/event-stream"},
+                timeout=30.0,
+                sse_read_timeout=30.0
+            )
+        )
+        # ... rest of initialization
+    except Exception as e:
+        logger.error(f"Initialization failed: {e}")
+        raise
+```
+
+### 5. **Testing Strategy**
+- **Test Data Generation**: Use `generate_testdata.py` for comprehensive scenarios
+- **Unit Tests**: Test individual components in isolation
+- **Integration Tests**: Test MCP tool interactions
+- **End-to-End Tests**: Test complete game flows
+
+### 6. **Deployment Checklist**
+- [ ] Docker images built and pushed to Artifact Registry
+- [ ] Cloud Run services updated with latest images
+- [ ] Environment variables configured correctly
+- [ ] MCP server endpoints accessible
+- [ ] Risk API server responding
+- [ ] ADK agent can connect to MCP server
+
+## 🔍 Debugging & Troubleshooting
+
+### Common Issues
+1. **MCP Connection Failures**: Check URL, headers, and timeouts
+2. **Authentication Errors**: Verify Google Cloud credentials
+3. **Tool Call Failures**: Check Risk API server status
+4. **Game State Issues**: Validate `game_config.json` format
+
+### Debug Commands
+```bash
+# Check Cloud Run services
+gcloud run services list --region=europe-west4
+
+# Check Artifact Registry images
+gcloud artifacts docker images list europe-west4-docker.pkg.dev/koen-gcompany-demo/risk --include-tags
+
+# Test MCP server connectivity
+curl -H "accept: application/json, text/event-stream" \
+     https://risk-mcp-server-jn3e4lhybq-ez.a.run.app/mcp/stream
+
+# Test Risk API
+curl https://risk-api-server-jn3e4lhybq-ez.a.run.app/game-state
+```
+
+## 📚 Key Dependencies
+
+### Python Dependencies
+```txt
+# agents/player_agent/requirements.txt
+google-adk
+google-genai
+a2a
+uvicorn
+
+# mcp-server/requirements.txt
+fastmcp
+requests
+uvicorn
+```
+
+### External Dependencies
+- **Risk Board Game Server**: Rust-based game engine (external repo)
+- **Risk UI**: React-based interface (external repo)
+
+## 🚀 Deployment Workflow
+
+### 1. Development
+```bash
+# Local development setup
+python -m venv venv
+source venv/bin/activate
+pip install -r agents/player_agent/requirements.txt
+pip install -r mcp-server/requirements.txt
+```
+
+### 2. Testing
+```bash
+# Generate test data
+python generate_testdata.py
+
+# Run tests
+python -m pytest tests/ -v
+```
+
+### 3. Building
+```bash
+# Build all images
+docker build -t europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-mcp-server:latest mcp-server/
+docker build -t europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/player-agent:latest agents/player_agent/
+docker build -t europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-board-game-server:latest .
+```
+
+### 4. Deployment
+```bash
+# Push images
+docker push europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-mcp-server:latest
+docker push europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/player-agent:latest
+docker push europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-board-game-server:latest
+
+# Deploy to Cloud Run
+gcloud run deploy risk-mcp-server --image europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-mcp-server:latest --region europe-west4 --allow-unauthenticated
+gcloud run deploy player-agent --image europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/player-agent:latest --region europe-west4 --allow-unauthenticated
+gcloud run deploy risk-api-server --image europe-west4-docker.pkg.dev/koen-gcompany-demo/risk/risk-board-game-server:latest --region europe-west4 --allow-unauthenticated
+```
+
+## ⚠️ Important Notes
+
+1. **Always verify URLs and endpoints** before making changes
+2. **Check Google Cloud documentation** for latest best practices
+3. **Test MCP tool interactions** thoroughly before deployment
+4. **Monitor Cloud Run logs** for debugging production issues
+5. **Keep dependencies updated** and check for security vulnerabilities
+6. **Use semantic versioning** for Docker image tags
+7. **Document all API changes** and update this file accordingly
+
+## 🔗 Quick Reference
+
+- **Project Root**: `/home/koen/src/risk`
+- **External Repos**: `/home/koen/src/risk-board_game-server`, `/home/koen/src/Risk-UI`
+- **Cloud Project**: `koen-gcompany-demo`
+- **Region**: `europe-west4`
+- **Artifact Registry**: `koen-gcompany-demo/risk`
+
+---
+
+**Remember: This is a cutting-edge agentic web platform. Always double-check online documentation and follow best practices for production deployments.** 
