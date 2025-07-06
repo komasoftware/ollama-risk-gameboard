@@ -1,25 +1,40 @@
 #!/usr/bin/env python3
 """
-Risk Agent Client - CLI interface for interacting with the Risk Player Agent
-Handles A2A streaming protocol properly with connection management
+Risk Agent Client - A2A client for interacting with Risk Player Agents
+Uses A2A SDK for proper persistent streaming connections
 """
 
 import json
-import requests
 import sys
+import asyncio
 from typing import Dict, Any, Optional
-import time
+import httpx
+from a2a.client import A2AClient
+from a2a.types import SendStreamingMessageRequest, Message, TextPart, DataPart
+import uuid
 
 class RiskAgentClient:
-    """Client for interacting with the Risk Player Agent via A2A protocol"""
+    """A2A client for interacting with Risk Player Agents - uses A2A SDK for persistent streaming"""
     
     def __init__(self, agent_url: str = "http://localhost:8080"):
         self.agent_url = agent_url
-        self.session = requests.Session()
+        self.a2a_client = None
+        self.httpx_client = None
+        self.last_response = None
+        self.connection_active = False
+        self.session_id = str(uuid.uuid4())
     
-    def send_turn_request(self, player_id: int, persona: str, message: str = "Play your turn") -> Optional[Dict[str, Any]]:
+    async def initialize(self):
+        """Initialize the A2A client connection"""
+        if not self.connection_active:
+            self.httpx_client = httpx.AsyncClient()
+            self.a2a_client = A2AClient(url=self.agent_url, httpx_client=self.httpx_client)
+            self.connection_active = True
+            print(f"🔌 [A2A] A2A client initialized (session id: {self.session_id})")
+    
+    async def send_turn_request(self, player_id: int, persona: str, message: str = "Play your turn") -> Optional[Dict[str, Any]]:
         """
-        Send a turn request to the agent and wait for response
+        Send a turn request to the agent using A2A SDK streaming client
         
         Args:
             player_id: Player ID (1-6)
@@ -29,149 +44,175 @@ class RiskAgentClient:
         Returns:
             Response data or None if failed
         """
-        # Prepare the A2A streaming request
-        request_data = {
-            "jsonrpc": "2.0",
-            "id": f"turn-{int(time.time())}",
-            "method": "message/stream",
-            "params": {
-                "message": {
-                    "role": "user",
-                    "messageId": f"msg-{int(time.time())}",
-                    "parts": [
-                        {
-                            "type": "text",
-                            "text": message
-                        },
-                        {
-                            "type": "data",
-                            "data": {
-                                "player_id": str(player_id),
-                                "persona": persona
-                            }
-                        }
-                    ]
-                }
-            }
-        }
         
-        print(f"🎮 Sending turn request for Player {player_id}...")
-        print(f"📝 Persona: {persona}")
-        print("⏳ Waiting for response...")
+        # Generate per-request UUIDs
+        request_uuid = str(uuid.uuid4())
+        task_uuid = str(uuid.uuid4())
+        
+        # Log request for debugging
+        print(f"🎮 [A2A] Sending turn request for Player {player_id} (request id: {request_uuid}, task id: {task_uuid})")
+        print(f"📝 [A2A] Persona: {persona}")
         
         try:
-            # Send streaming request
-            response = self.session.post(
-                self.agent_url,
-                json=request_data,
-                headers={"Content-Type": "application/json"},
-                stream=True,
-                timeout=120  # 2 minute timeout
+            
+            # Create the message parts
+            parts = [
+                TextPart(text=f"Player ID: {player_id}"),
+                TextPart(text=f"Persona: {persona}"),
+                TextPart(text=f"Message: {message}"),
+                DataPart(data={
+                    "session_id": self.session_id,
+                    "player_id": player_id,
+                    "persona": persona
+                })
+            ]
+            
+            # Create the streaming request
+            request = SendStreamingMessageRequest(
+                id=request_uuid,
+                params={
+                    "message": Message(
+                        role="user",
+                        messageId=request_uuid,
+                        taskId=task_uuid,
+                        parts=parts
+                    )
+                }
             )
             
-            if response.status_code != 200:
-                print(f"❌ Error: HTTP {response.status_code}")
-                return None
-            
-            # Process streaming response
-            agent_response = None
-            task_completed = False
-            
+            # Send streaming message and collect responses
+            responses = []
             try:
-                start_time = time.time()
-                timeout = 30  # 30 second timeout
-                
-                for line in response.iter_lines():
-                    # Check timeout
-                    if time.time() - start_time > timeout:
-                        print("⏰ Timeout reached, closing connection")
+                async for response in self.a2a_client.send_message_streaming(request):
+                    responses.append(response)
+                    print(f"🔍 [DEBUG] Raw response: {response}")
+                    print(f"🔍 [DEBUG] Response type: {type(response)}")
+                    print(f"🔍 [DEBUG] Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+
+                    # Debug: Print id, contextId, and taskId if available
+                    if hasattr(response, 'id'):
+                        print(f"🔍 [DEBUG] Response id: {response.id}")
+                    if hasattr(response, 'contextId'):
+                        print(f"🔍 [DEBUG] ContextId: {response.contextId}")
+                    if hasattr(response, 'taskId'):
+                        print(f"🔍 [DEBUG] TaskId: {response.taskId}")
+
+                    # Check if this is a message response for our request
+                    if (
+                        hasattr(response, 'root') and hasattr(response.root, 'id') and response.root.id == request_uuid and
+                        hasattr(response.root, 'result') and hasattr(response.root.result, 'kind') and response.root.result.kind == 'message'
+                    ):
+                        print(f"🔍 [DEBUG] Found message response for our request!")
+                        # Print the message content
+                        if hasattr(response.root.result, 'parts'):
+                            for part in response.root.result.parts:
+                                if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                    print(f"🤖 [A2A] Agent: {part.root.text}")
+                                elif hasattr(part, 'text'):
+                                    print(f"🤖 [A2A] Agent: {part.text}")
+                        print(f"🔍 [DEBUG] Breaking out of streaming loop (matched id)")
                         break
-                        
-                    if line:
-                        line_str = line.decode('utf-8')
-                        
-                        # Handle ping messages (keep-alive)
-                        if line_str.startswith(': ping'):
-                            continue
-                        
-                        # Handle data messages
-                        if line_str.startswith('data: '):
-                            try:
-                                data = json.loads(line_str[6:])  # Remove 'data: ' prefix
-                                
-                                # Check if this is our response
-                                if 'result' in data and 'kind' in data['result'] and data['result']['kind'] == 'message':
-                                    agent_response = data['result']
-                                    print("✅ Received agent response!")
-                                
-                                # Check if task is completed
-                                if 'result' in data and 'kind' in data['result'] and data['result']['kind'] == 'status-update':
-                                    if 'status' in data['result'] and 'state' in data['result']['status']:
-                                        if data['result']['status']['state'] == 'completed':
-                                            task_completed = True
-                                            print("✅ Task completed!")
-                                            # Exit the loop after task completion
-                                            break
-                                    
-                            except json.JSONDecodeError:
-                                print(f"⚠️  Could not parse JSON: {line_str}")
-                                continue
-                                
-                        # If we have a response and task is completed, we can exit
-                        if agent_response and task_completed:
-                            break
-                                
+                    
+                    # Check if this is a completion event for our task
+                    elif (
+                        hasattr(response, 'root') and hasattr(response.root, 'result') and hasattr(response.root.result, 'kind') and 
+                        response.root.result.kind == 'status-update' and 
+                        hasattr(response.root.result, 'status') and hasattr(response.root.result.status, 'state') and
+                        response.root.result.status.state == 'completed' and
+                        hasattr(response.root.result, 'taskId') and response.root.result.taskId == task_uuid
+                    ):
+                        print(f"🔍 [DEBUG] Found completion event for our task!")
+                        print(f"🔍 [DEBUG] Breaking out of streaming loop (matched taskId)")
+                        break
+
+                    # Debug: Print what kind of event we got if not matched
+                    if hasattr(response, 'root') and hasattr(response.root, 'result'):
+                        print(f"🔍 [DEBUG] Response has result attribute")
+                        if hasattr(response.root.result, 'kind'):
+                            print(f"🔍 [DEBUG] Event kind: {response.root.result.kind}")
+                        else:
+                            print(f"🔍 [DEBUG] Result has no kind attribute")
+                    else:
+                        print(f"🔍 [DEBUG] No result attribute found in response")
+
             except Exception as e:
-                # If we get a connection error but we already have a response, that's okay
-                if agent_response:
-                    print(f"⚠️  Connection closed (expected): {e}")
-                else:
-                    print(f"❌ Connection error: {e}")
-                    return None
+                print(f"⚠️  [A2A] Streaming error (this might be expected): {e}")
+                # Continue processing if we have responses
+                if not responses:
+                    raise
             
-            # Close the connection gracefully
-            try:
-                response.close()
-            except:
-                pass  # Connection might already be closed
+            # Store the last response
+            if responses:
+                print(f"🔍 [DEBUG] Storing {len(responses)} responses")
+                self.last_response = {
+                    "responses": [r.model_dump() if hasattr(r, 'model_dump') else str(r) for r in responses],
+                    "final_response": responses[-1].model_dump() if hasattr(responses[-1], 'model_dump') else str(responses[-1])
+                }
+                print("✅ [A2A] Received agent response!")
+                print(f"🔍 [DEBUG] Returning response to main loop")
+                return self.last_response
             
-            if agent_response:
-                return agent_response
-            else:
-                print("❌ No response received from agent")
-                return None
-                
-        except requests.exceptions.Timeout:
-            print("❌ Request timed out")
+            print("❌ [A2A] No response received from agent")
             return None
-        except requests.exceptions.RequestException as e:
-            print(f"❌ Request failed: {e}")
+            
+            # This should never be reached with the new approach
+            print("❌ [A2A] No response received from agent")
+            return None
+                
+        except Exception as e:
+            print(f"❌ [A2A] Request failed: {e}")
             return None
     
-    def test_connection(self) -> bool:
-        """Test if the agent is reachable"""
+    async def close_session(self):
+        """Close the A2A client connection gracefully when client exits"""
         try:
-            # Send a simple test request to see if agent responds
-            test_data = {
-                "jsonrpc": "2.0",
-                "id": "test-connection",
-                "method": "message/stream",
-                "params": {
-                    "message": {
-                        "role": "user",
-                        "messageId": "test",
-                        "parts": [{"type": "text", "text": "test"}]
+            print("🔌 [A2A] Closing A2A client connection...")
+            if self.httpx_client:
+                try:
+                    await self.httpx_client.aclose()
+                except asyncio.CancelledError:
+                    # Ignore cancellation errors during shutdown
+                    pass
+                except Exception as e:
+                    print(f"⚠️  [A2A] Error closing httpx client: {e}")
+                self.connection_active = False
+                print("✅ [A2A] A2A client connection closed gracefully")
+        except Exception as e:
+            print(f"⚠️  [A2A] Error closing A2A client connection: {e}")
+    
+    async def test_connection(self) -> bool:
+        """Test if the agent is reachable using A2A SDK"""
+        try:
+            # Initialize A2A client for testing with httpx client
+            async with httpx.AsyncClient() as test_httpx_client:
+                test_client = A2AClient(url=self.agent_url, httpx_client=test_httpx_client)
+                
+                # Generate per-request UUIDs
+                request_uuid = str(uuid.uuid4())
+                # Create a simple test message
+                test_parts = [
+                    TextPart(text="test"),
+                    DataPart(data={"session_id": self.session_id})
+                ]
+                test_request = SendStreamingMessageRequest(
+                    id=request_uuid,
+                    params={
+                        "message": Message(
+                            role="user",
+                            messageId=request_uuid,
+                            parts=test_parts
+                        )
                     }
-                }
-            }
-            response = self.session.post(
-                self.agent_url,
-                json=test_data,
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-            return response.status_code == 200
-        except:
+                )
+                
+                # Try to send a test message
+                async for response in test_client.send_message_streaming(test_request):
+                    # If we get any response, the connection works
+                    return True
+                
+                return False
+        except Exception as e:
+            print(f"❌ [A2A] Connection test failed: {e}")
             return False
 
 def print_banner():
@@ -182,6 +223,8 @@ def print_banner():
     print("Interactive client for the Risk Player Agent")
     print("Uses A2A streaming protocol for real-time responses")
     print("=" * 60)
+    # Print session id for debugging
+    # The client is initialized in main(), so we print session id after client creation
 
 def get_persona_choice() -> str:
     """Get persona choice from user"""
@@ -222,23 +265,51 @@ def print_response(response: Dict[str, Any]):
     print("🤖 AGENT RESPONSE")
     print("=" * 60)
     
-    if 'parts' in response and response['parts']:
+    print(f"🔍 [DEBUG] Response keys: {list(response.keys())}")
+    if 'final_response' in response:
+        final_response = response['final_response']
+        print(f"🔍 [DEBUG] Final response type: {type(final_response)}")
+        print(f"🔍 [DEBUG] Final response keys: {list(final_response.keys()) if isinstance(final_response, dict) else 'not a dict'}")
+        
+        # If it's a message event with top-level parts
+        if isinstance(final_response, dict) and final_response.get('kind') == 'message' and 'parts' in final_response:
+            print(f"🔍 [DEBUG] Found message with parts: {len(final_response['parts'])} parts")
+            for part in final_response['parts']:
+                if 'text' in part:
+                    print(part['text'])
+        elif 'content' in final_response and final_response['content']:
+            for part in final_response['content'].get('parts', []):
+                if 'text' in part:
+                    print(part['text'])
+        elif 'message' in final_response and final_response['message']:
+            for part in final_response['message'].get('parts', []):
+                if 'text' in part:
+                    print(part['text'])
+        else:
+            print(f"🔍 [DEBUG] No matching structure found in final_response")
+    elif 'parts' in response and response['parts']:
         for part in response['parts']:
             if 'text' in part:
                 print(part['text'])
+    else:
+        print(f"🔍 [DEBUG] No final_response or parts found in response")
     
     print("=" * 60)
 
-def main():
+async def main():
     """Main CLI interface"""
     print_banner()
     
     # Initialize client
     client = RiskAgentClient()
+    print(f"🆔 Session ID: {client.session_id}")
+    
+    # Initialize A2A client connection
+    await client.initialize()
     
     # Test connection
     print("🔍 Testing connection to agent...")
-    if not client.test_connection():
+    if not await client.test_connection():
         print("❌ Cannot connect to agent. Make sure it's running on http://localhost:8080")
         sys.exit(1)
     print("✅ Connected to agent successfully!")
@@ -251,9 +322,12 @@ def main():
             persona = get_persona_choice()
             
             # Send request
-            response = client.send_turn_request(player_id, persona)
+            print(f"🔍 [DEBUG] Calling send_turn_request...")
+            response = await client.send_turn_request(player_id, persona)
+            print(f"🔍 [DEBUG] send_turn_request returned: {response is not None}")
             
             if response:
+                print(f"🔍 [DEBUG] Calling print_response...")
                 print_response(response)
             else:
                 print("❌ Failed to get response from agent")
@@ -270,7 +344,9 @@ def main():
             print(f"❌ Unexpected error: {e}")
             break
     
+    # Graceful cleanup when client exits
+    await client.close_session()
     print("🎯 Thanks for using the Risk Agent Client!")
 
 if __name__ == "__main__":
-    main() 
+    asyncio.run(main()) 

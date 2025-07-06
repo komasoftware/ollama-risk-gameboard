@@ -133,7 +133,10 @@ class RiskADKAgentHTTP:
         {persona_instruction}
         
         CRITICAL INSTRUCTIONS:
-        - Play EXACTLY ONE TURN and then STOP
+        - Play all phases of the player's turn and then STOP
+        - Check the possible actions for each phase by getting the game state and play them one at a time
+        - Check the game state after each action to see if you can do more actions and if it's still your turn
+        - Always decide on the next action based on the game state and the possible actions
         - Do NOT wait for other players or future turns
         - Do NOT continue playing after completing your turn
         - If it's not your turn, simply state that and stop
@@ -141,9 +144,10 @@ class RiskADKAgentHTTP:
         TURN EXECUTION:
         1. First, get the current game state
         2. Check if it's your turn (current_player should match Player {player_id})
-        3. If it's your turn, play through the phases: Reinforce → Attack → Fortify
-        4. If it's NOT your turn, explain why and stop immediately
-        5. After completing your turn, stop and provide a summary of your strategy
+        3. If it's your turn, play through the phases: Reinforce → Attack → Fortify or other possible actions
+        4. Reason about your strategy and explain your actions
+        5. If it's NOT your turn, explain why and stop immediately
+        6. After completing your turn, stop and provide a summary of your strategy
         
         Make your moves one at a time and explain your reasoning.
         STOP after completing your turn - do not continue.
@@ -183,8 +187,9 @@ class PlayerAgentExecutor(AgentExecutor):
         logger.info("PlayerAgentExecutor initialized")
     
     async def execute(self, context, event_queue):
-        logger.info(f"[EXECUTE] Called with context: {context}, event_queue: {event_queue}")
-        
+        # logger.info(f"[EXECUTE] Called with context: {context}, event_queue: {event_queue}")
+        logger.info(f"[EXECUTE] Execute called for task {context.task_id}, context {context.context_id}")
+
         # Extract message content using proper A2A protocol approach
         user_message = None
         player_id = None  # Will be extracted from DataPart
@@ -244,21 +249,29 @@ class PlayerAgentExecutor(AgentExecutor):
                 response = f"Error executing turn: {str(e)}"
             
             # Send response message using enqueue_event
-            await event_queue.enqueue_event(Message(
+            logger.info(f"[EXECUTE] Sending response message for task {context.task_id}")
+            response_message = Message(
                 contextId=context.context_id,
                 messageId=f"response-{context.task_id}",
                 parts=[Part(root=TextPart(text=response))],
                 role=Role.agent,
                 taskId=context.task_id
-            ))
+            )
+            await event_queue.enqueue_event(response_message)
+            logger.info(f"[EXECUTE] Response message sent successfully")
+            logger.info(f"[EXECUTE] Response message object: {response_message}")
             
             # Send task completion event
-            await event_queue.enqueue_event(TaskStatusUpdateEvent(
+            logger.info(f"[EXECUTE] Sending task completion event for task {context.task_id}")
+            completion_event = TaskStatusUpdateEvent(
                 taskId=context.task_id,
                 contextId=context.context_id,
                 status=TaskStatus(state=TaskState.completed),
                 final=True
-            ))
+            )
+            await event_queue.enqueue_event(completion_event)
+            logger.info(f"[EXECUTE] Task completion event sent successfully")
+            logger.info(f"[EXECUTE] Completion event object: {completion_event}")
         elif user_message is None:
             logger.warning("[EXECUTE] user_message is None, input required")
             await event_queue.enqueue_event(TaskStatusUpdateEvent(
