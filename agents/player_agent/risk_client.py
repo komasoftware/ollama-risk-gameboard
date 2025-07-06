@@ -12,12 +12,14 @@ import httpx
 from a2a.client import A2AClient
 from a2a.types import SendStreamingMessageRequest, Message, TextPart, DataPart
 import uuid
+import re
 
 class RiskAgentClient:
     """A2A client for interacting with Risk Player Agents - uses A2A SDK for persistent streaming"""
     
-    def __init__(self, agent_url: str = "http://localhost:8080"):
+    def __init__(self, agent_url: str = "http://localhost:8080", risk_api_url: str = "https://risk-api-server-jn3e4lhybq-ez.a.run.app"):
         self.agent_url = agent_url
+        self.risk_api_url = risk_api_url
         self.a2a_client = None
         self.httpx_client = None
         self.last_response = None
@@ -82,35 +84,24 @@ class RiskAgentClient:
             
             # Send streaming message and collect responses
             responses = []
+            agent_message = None
             try:
                 async for response in self.a2a_client.send_message_streaming(request):
-                    responses.append(response)
-                    print(f"🔍 [DEBUG] Raw response: {response}")
-                    print(f"🔍 [DEBUG] Response type: {type(response)}")
-                    print(f"🔍 [DEBUG] Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}")
-
-                    # Debug: Print id, contextId, and taskId if available
-                    if hasattr(response, 'id'):
-                        print(f"🔍 [DEBUG] Response id: {response.id}")
-                    if hasattr(response, 'contextId'):
-                        print(f"🔍 [DEBUG] ContextId: {response.contextId}")
-                    if hasattr(response, 'taskId'):
-                        print(f"🔍 [DEBUG] TaskId: {response.taskId}")
+                    # Only print a single debug line for troubleshooting
+                    # print(f"[DEBUG] Received response of type: {type(response)}")
 
                     # Check if this is a message response for our request
                     if (
                         hasattr(response, 'root') and hasattr(response.root, 'id') and response.root.id == request_uuid and
                         hasattr(response.root, 'result') and hasattr(response.root.result, 'kind') and response.root.result.kind == 'message'
                     ):
-                        print(f"🔍 [DEBUG] Found message response for our request!")
-                        # Print the message content
+                        # Extract the agent's message
                         if hasattr(response.root.result, 'parts'):
                             for part in response.root.result.parts:
                                 if hasattr(part, 'root') and hasattr(part.root, 'text'):
-                                    print(f"🤖 [A2A] Agent: {part.root.text}")
+                                    agent_message = part.root.text
                                 elif hasattr(part, 'text'):
-                                    print(f"🤖 [A2A] Agent: {part.text}")
-                        print(f"🔍 [DEBUG] Breaking out of streaming loop (matched id)")
+                                    agent_message = part.text
                         break
                     
                     # Check if this is a completion event for our task
@@ -121,43 +112,24 @@ class RiskAgentClient:
                         response.root.result.status.state == 'completed' and
                         hasattr(response.root.result, 'taskId') and response.root.result.taskId == task_uuid
                     ):
-                        print(f"🔍 [DEBUG] Found completion event for our task!")
-                        print(f"🔍 [DEBUG] Breaking out of streaming loop (matched taskId)")
                         break
 
-                    # Debug: Print what kind of event we got if not matched
-                    if hasattr(response, 'root') and hasattr(response.root, 'result'):
-                        print(f"🔍 [DEBUG] Response has result attribute")
-                        if hasattr(response.root.result, 'kind'):
-                            print(f"🔍 [DEBUG] Event kind: {response.root.result.kind}")
-                        else:
-                            print(f"🔍 [DEBUG] Result has no kind attribute")
-                    else:
-                        print(f"🔍 [DEBUG] No result attribute found in response")
-
             except Exception as e:
-                print(f"⚠️  [A2A] Streaming error (this might be expected): {e}")
-                # Continue processing if we have responses
+                print(f"⚠️  [A2A] Streaming error: {e}")
                 if not responses:
                     raise
             
-            # Store the last response
-            if responses:
-                print(f"🔍 [DEBUG] Storing {len(responses)} responses")
-                self.last_response = {
-                    "responses": [r.model_dump() if hasattr(r, 'model_dump') else str(r) for r in responses],
-                    "final_response": responses[-1].model_dump() if hasattr(responses[-1], 'model_dump') else str(responses[-1])
-                }
-                print("✅ [A2A] Received agent response!")
-                print(f"🔍 [DEBUG] Returning response to main loop")
-                return self.last_response
-            
-            print("❌ [A2A] No response received from agent")
-            return None
-            
-            # This should never be reached with the new approach
-            print("❌ [A2A] No response received from agent")
-            return None
+            # Show the agent's response in the UI
+            if agent_message:
+                print("\n" + "=" * 60)
+                print("🤖 AGENT RESPONSE")
+                print("=" * 60)
+                print(agent_message)
+                print("=" * 60)
+                return {"agent_message": agent_message}
+            else:
+                print("❌ [A2A] No response received from agent")
+                return None
                 
         except Exception as e:
             print(f"❌ [A2A] Request failed: {e}")
@@ -215,6 +187,35 @@ class RiskAgentClient:
             print(f"❌ [A2A] Connection test failed: {e}")
             return False
 
+    async def get_current_player(self) -> Optional[Dict[str, Any]]:
+        """Fetch the current game state from the Risk API server and return the current player info."""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{self.risk_api_url}/game-state")
+                resp.raise_for_status()
+                data = resp.json()
+                # Try both 'game_state' and root for compatibility
+                game_state = data.get('game_state', data)
+                current_player = game_state.get('current_player')
+                players = game_state.get('players', [])
+                if current_player is not None and players:
+                    # Extract numeric player ID from current_player string (e.g., "Player 5" -> 5)
+                    if isinstance(current_player, str):
+                        match = re.search(r'(\d+)', current_player)
+                        if match:
+                            numeric_id = int(match.group(1))
+                            # Find player info by matching the numeric ID
+                            player_info = next((p for p in players if p.get('id') == numeric_id - 1), None)
+                            return {"id": numeric_id, "info": player_info}
+                    elif isinstance(current_player, int):
+                        # If current_player is already numeric, use it directly
+                        player_info = next((p for p in players if p.get('id') == current_player), None)
+                        return {"id": current_player + 1, "info": player_info}
+                return None
+        except Exception as e:
+            print(f"⚠️  Could not fetch game state: {e}")
+            return None
+
 def print_banner():
     """Print the client banner"""
     print("=" * 60)
@@ -265,34 +266,10 @@ def print_response(response: Dict[str, Any]):
     print("🤖 AGENT RESPONSE")
     print("=" * 60)
     
-    print(f"🔍 [DEBUG] Response keys: {list(response.keys())}")
-    if 'final_response' in response:
-        final_response = response['final_response']
-        print(f"🔍 [DEBUG] Final response type: {type(final_response)}")
-        print(f"🔍 [DEBUG] Final response keys: {list(final_response.keys()) if isinstance(final_response, dict) else 'not a dict'}")
-        
-        # If it's a message event with top-level parts
-        if isinstance(final_response, dict) and final_response.get('kind') == 'message' and 'parts' in final_response:
-            print(f"🔍 [DEBUG] Found message with parts: {len(final_response['parts'])} parts")
-            for part in final_response['parts']:
-                if 'text' in part:
-                    print(part['text'])
-        elif 'content' in final_response and final_response['content']:
-            for part in final_response['content'].get('parts', []):
-                if 'text' in part:
-                    print(part['text'])
-        elif 'message' in final_response and final_response['message']:
-            for part in final_response['message'].get('parts', []):
-                if 'text' in part:
-                    print(part['text'])
-        else:
-            print(f"🔍 [DEBUG] No matching structure found in final_response")
-    elif 'parts' in response and response['parts']:
-        for part in response['parts']:
-            if 'text' in part:
-                print(part['text'])
+    if 'agent_message' in response:
+        print(response['agent_message'])
     else:
-        print(f"🔍 [DEBUG] No final_response or parts found in response")
+        print("❌ No agent message found in response")
     
     print("=" * 60)
 
@@ -317,17 +294,22 @@ async def main():
     # Main interaction loop
     while True:
         try:
-            # Get user input
-            player_id = get_player_id()
+            # Fetch current player from Risk API
+            current_player = await client.get_current_player()
+            if current_player:
+                player_id = current_player["id"]  # Already converted to 1-based ID
+                player_name = current_player["info"].get("name") if current_player["info"] else None
+                print(f"\n🎮 Current player: {str(player_name) if player_name else 'Unknown'} (Player {player_id})")
+            else:
+                print("\n⚠️  Could not determine current player. Defaulting to Player 1.")
+                player_id = 1
+
             persona = get_persona_choice()
             
             # Send request
-            print(f"🔍 [DEBUG] Calling send_turn_request...")
             response = await client.send_turn_request(player_id, persona)
-            print(f"🔍 [DEBUG] send_turn_request returned: {response is not None}")
             
             if response:
-                print(f"🔍 [DEBUG] Calling print_response...")
                 print_response(response)
             else:
                 print("❌ Failed to get response from agent")
@@ -339,6 +321,7 @@ async def main():
                 
         except KeyboardInterrupt:
             print("\n\n👋 Goodbye!")
+            await client.close_session()
             break
         except Exception as e:
             print(f"❌ Unexpected error: {e}")
