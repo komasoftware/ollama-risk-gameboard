@@ -6,6 +6,7 @@ Integrates with Risk MCP server using MCPToolset over HTTP
 
 import logging
 import os
+import time  # Add this at the top with other imports
 from typing import Dict, Any
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.runners import Runner
@@ -24,8 +25,11 @@ import uvicorn
 from google.auth import default
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+# Suppress noisy third-party loggers
+logging.getLogger("google_adk.google.adk.tools.base_authenticated_tool").setLevel(logging.ERROR)
+logging.getLogger("google_genai.types").setLevel(logging.ERROR)
 
 class RiskADKAgentHTTP:
     
@@ -39,15 +43,15 @@ class RiskADKAgentHTTP:
         self.runner = None
         self.session_service = None
         self.session = None
-        logger.info("RiskADKAgentHTTP instance created")
+        logger.debug("RiskADKAgentHTTP instance created")
     
     async def initialize(self):
         """Initialize the agent with MCP tools over HTTP"""
-        logger.info(f"[INIT] Initializing Risk ADK Agent with MCP server at {self.mcp_server_url}")
+        logger.debug(f"Initializing Risk ADK Agent with MCP server at {self.mcp_server_url}")
         
        
         # Create MCP toolset for Risk server using HTTP connection
-        logger.info(f"[INIT] Creating MCP toolset with URL: {self.mcp_server_url}")
+        logger.debug(f"Creating MCP toolset with URL: {self.mcp_server_url}")
         self.toolset = MCPToolset(
             connection_params=StreamableHTTPConnectionParams(
                 url=self.mcp_server_url,
@@ -56,7 +60,7 @@ class RiskADKAgentHTTP:
                 sse_read_timeout=30.0  # 30 second SSE read timeout
             )
         )
-        logger.info(f"[INIT] MCP toolset created successfully")
+        logger.debug("MCP toolset created successfully")
         
         # Create the LLM agent
         model = Gemini(
@@ -66,7 +70,7 @@ class RiskADKAgentHTTP:
             location="global"
         )
         
-        logger.info(f"Using Gemini model: {model.model}")
+        logger.debug(f"Using Gemini model: {model.model}")
         
         self.agent = LlmAgent(
             model=model,
@@ -112,7 +116,7 @@ class RiskADKAgentHTTP:
             session_service=self.session_service,
         )
         
-        logger.info("[INIT] Risk ADK Agent (HTTP) initialized successfully")
+        logger.debug("Risk ADK Agent (HTTP) initialized successfully")
    
     
     async def play_turn(self, player_id: int, persona_description: str = None) -> Dict[str, Any]:
@@ -155,18 +159,30 @@ class RiskADKAgentHTTP:
         
         content = types.Content(role='user', parts=[types.Part(text=query)])
         
+        logger.warning("Gemini model call started")
+        start = time.monotonic()
         events_async = self.runner.run_async(
             session_id=self.session.id, 
             user_id=self.session.user_id, 
             new_message=content
         )
-        
         result = None
+        tool_calls = 0
         async for event in events_async:
-            if hasattr(event, 'content') and event.content:
+            # Log only tool calls and their results
+            if hasattr(event, 'tool_calls') and event.tool_calls:
+                tool_calls += len(event.tool_calls)
+                logger.warning(f"LLM Tool Calls: {event.tool_calls}")
+            elif hasattr(event, 'tool_results') and event.tool_results:
+                logger.debug(f"LLM Tool Results: {event.tool_results}")
+            elif hasattr(event, 'content') and event.content:
                 result = event.content
+                logger.warning(f"LLM Final Response: {event.content}")
             elif hasattr(event, 'text') and event.text:
                 result = event.text
+                logger.warning(f"LLM Final Response: {event.text}")
+        elapsed = time.monotonic() - start
+        logger.warning(f"Gemini model call finished in {elapsed:.2f} seconds with {tool_calls} tool calls")
         return {
             "player_id": player_id,
             "response": result,
@@ -176,19 +192,18 @@ class RiskADKAgentHTTP:
     
     async def close(self):
         """Clean up resources"""
-        logger.info("[CLOSE] Closing RiskADKAgentHTTP resources")
+        logger.debug("[CLOSE] Closing RiskADKAgentHTTP resources")
         if self.toolset:
             await self.toolset.close()
-        logger.info("[CLOSE] Risk ADK Agent (HTTP) closed")
+        logger.debug("[CLOSE] Risk ADK Agent (HTTP) closed")
 
 class PlayerAgentExecutor(AgentExecutor):
     def __init__(self):
         self.risk_agent = None
-        logger.info("PlayerAgentExecutor initialized")
+        logger.debug("PlayerAgentExecutor initialized")
     
     async def execute(self, context, event_queue):
-        # logger.info(f"[EXECUTE] Called with context: {context}, event_queue: {event_queue}")
-        logger.info(f"[EXECUTE] Execute called for task {context.task_id}, context {context.context_id}")
+        logger.debug(f"Execute called for task {context.task_id}")
 
         # Extract message content using proper A2A protocol approach
         user_message = None
@@ -232,7 +247,7 @@ class PlayerAgentExecutor(AgentExecutor):
                 elif hasattr(part.root, 'text') and not user_message:
                     user_message = part.root.text
         else:
-            logger.warning("[EXECUTE] No message parts found in context")
+            logger.warning("No message parts found in context")
             
         if user_message and player_id is not None:
             # Initialize the Risk agent if not already done
@@ -245,11 +260,11 @@ class PlayerAgentExecutor(AgentExecutor):
                 result = await self.risk_agent.play_turn(player_id, persona_description)
                 response = f"Executed turn for Player {player_id}. Persona: {persona_description or 'Default'}. Result: {result.get('response', 'No response')}"
             except Exception as e:
-                logger.error(f"[EXECUTE] Error executing turn: {e}")
+                logger.error(f"Error executing turn: {e}")
                 response = f"Error executing turn: {str(e)}"
             
             # Send response message using enqueue_event
-            logger.info(f"[EXECUTE] Sending response message for task {context.task_id}")
+            logger.debug(f"Sending response message for task {context.task_id}")
             response_message = Message(
                 contextId=context.context_id,
                 messageId=f"response-{context.task_id}",
@@ -258,11 +273,10 @@ class PlayerAgentExecutor(AgentExecutor):
                 taskId=context.task_id
             )
             await event_queue.enqueue_event(response_message)
-            logger.info(f"[EXECUTE] Response message sent successfully")
-            logger.info(f"[EXECUTE] Response message object: {response_message}")
+            logger.debug(f"Response message sent successfully")
             
             # Send task completion event
-            logger.info(f"[EXECUTE] Sending task completion event for task {context.task_id}")
+            logger.debug(f"Sending task completion event for task {context.task_id}")
             completion_event = TaskStatusUpdateEvent(
                 taskId=context.task_id,
                 contextId=context.context_id,
@@ -270,10 +284,9 @@ class PlayerAgentExecutor(AgentExecutor):
                 final=True
             )
             await event_queue.enqueue_event(completion_event)
-            logger.info(f"[EXECUTE] Task completion event sent successfully")
-            logger.info(f"[EXECUTE] Completion event object: {completion_event}")
+            logger.debug(f"Task completion event sent successfully")
         elif user_message is None:
-            logger.warning("[EXECUTE] user_message is None, input required")
+            logger.warning("user_message is None, input required")
             await event_queue.enqueue_event(TaskStatusUpdateEvent(
                 taskId=context.task_id,
                 contextId=context.context_id,
@@ -281,7 +294,7 @@ class PlayerAgentExecutor(AgentExecutor):
                 final=False
             ))
         elif player_id is None:
-            logger.warning("[EXECUTE] player_id is missing from request")
+            logger.warning("player_id is missing from request")
             await event_queue.enqueue_event(TaskStatusUpdateEvent(
                 taskId=context.task_id,
                 contextId=context.context_id,
@@ -291,7 +304,7 @@ class PlayerAgentExecutor(AgentExecutor):
     
     async def cancel(self, context, event_queue):
         """Cancel the current task"""
-        logger.info(f"[CANCEL] Cancelling task {context.task_id}")
+        logger.debug(f"Cancelling task {context.task_id}")
         await event_queue.enqueue_event(TaskStatusUpdateEvent(
             taskId=context.task_id,
             contextId=context.context_id,
