@@ -17,7 +17,7 @@ import re
 class RiskAgentClient:
     """A2A client for interacting with Risk Player Agents - uses A2A SDK for persistent streaming"""
     
-    def __init__(self, agent_url: str = "http://localhost:8080", risk_api_url: str = "https://risk-api-server-jn3e4lhybq-ez.a.run.app"):
+    def __init__(self, agent_url: str = "http://localhost:8081", risk_api_url: str = "https://risk-api-server-jn3e4lhybq-ez.a.run.app"):
         self.agent_url = agent_url
         self.risk_api_url = risk_api_url
         self.a2a_client = None
@@ -287,7 +287,7 @@ async def main():
     # Test connection
     print("🔍 Testing connection to agent...")
     if not await client.test_connection():
-        print("❌ Cannot connect to agent. Make sure it's running on http://localhost:8080")
+        print("❌ Cannot connect to agent. Make sure it's running on http://localhost:8081")
         sys.exit(1)
     print("✅ Connected to agent successfully!")
     

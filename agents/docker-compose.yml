@@ -8,10 +8,10 @@ services:
       dockerfile: Dockerfile
     container_name: risk-workflow-agent
     ports:
-      - "8080:8080"
+      - "8087:8080"
     environment:
       - AGENT_NAME=RiskWorkflowAgent
-      - RISK_API_URL=https://risk-api-server-xxx.a.run.app
+      - RISK_API_URL=https://risk-api-server-441582515789.europe-west4.run.app
       - PLAYER_AGENT_URLS=["http://player-agent-1:8080/.well-known/agent.json","http://player-agent-2:8080/.well-known/agent.json","http://player-agent-3:8080/.well-known/agent.json","http://player-agent-4:8080/.well-known/agent.json"]
     restart: unless-stopped
 
@@ -25,7 +25,7 @@ services:
       - "8081:8080"
     environment:
       - AGENT_NAME=Player1
-      - MCP_SERVER_URL=https://risk-mcp-server-xxx.a.run.app/mcp/stream
+      - MCP_SERVER_URL=https://risk-mcp-server-441582515789.europe-west4.run.app/mcp/stream
     restart: unless-stopped
 
   # Player Agent 2
@@ -38,7 +38,7 @@ services:
       - "8082:8080"
     environment:
       - AGENT_NAME=Player2
-      - MCP_SERVER_URL=https://risk-mcp-server-xxx.a.run.app/mcp/stream
+      - MCP_SERVER_URL=https://risk-mcp-server-441582515789.europe-west4.run.app/mcp/stream
     restart: unless-stopped
 
   # Player Agent 3
@@ -51,7 +51,7 @@ services:
       - "8085:8080"
     environment:
       - AGENT_NAME=Player3
-      - MCP_SERVER_URL=https://risk-mcp-server-xxx.a.run.app/mcp/stream
+      - MCP_SERVER_URL=https://risk-mcp-server-441582515789.europe-west4.run.app/mcp/stream
     restart: unless-stopped
 
   # Player Agent 4
@@ -64,5 +64,5 @@ services:
       - "8086:8080"
     environment:
       - AGENT_NAME=Player4
-      - MCP_SERVER_URL=https://risk-mcp-server-xxx.a.run.app/mcp/stream
+      - MCP_SERVER_URL=https://risk-mcp-server-441582515789.europe-west4.run.app/mcp/stream
     restart: unless-stopped 

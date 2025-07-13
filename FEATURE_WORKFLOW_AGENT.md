@@ -2,22 +2,16 @@
 
 ## 🎯 Overview
 
-Implement a workflow agent that acts as a game master to orchestrate multi-player Risk games. The workflow agent will coordinate up to 6 player agents, manage game flow, and ensure proper turn execution without using LLM reasoning for orchestration.
+Implement a workflow agent that acts as a game master to orchestrate multi-player Risk games. The workflow agent will coordinate up to 6 player agents, manage game flow, and ensure proper turn execution. Users interact directly with the workflow agent via HTTP endpoints.
 
 ## 🏗️ Architecture
 
-### Current State
-- Individual player agents that can play single turns
-- MCP server with game state tools
-- A2A protocol for agent communication
-- Risk game server managing game state
-
-### Target Architecture
+### Simplified Architecture
 ```
          ┌──────────────────────┐
          │  Workflow Agent      │
          │  (Game Master)       │
-         │  (Pure Logic)        │
+         │  (FastAPI Service)   │
          └───────┬───────┬──────┘
                  │       │
                  │       │
@@ -39,45 +33,46 @@ Implement a workflow agent that acts as a game master to orchestrate multi-playe
 ```
 
 **Note:**
-- Workflow agent communicates directly with both the Risk API (for game state/control) and the player agents (to assign turns and coordinate play).
-- Player agents communicate with the MCP server for tool-based game actions.
-- MCP server communicates with the Risk API.
-- Workflow agent does **not** use MCP tools.
+- **Workflow Agent**: FastAPI service that users interact with directly via HTTP endpoints
+- **Player Agents**: ADK agents that receive turn assignments via A2A messages
+- **Risk API**: Rust server managing game state
 
 ## 🎮 Game Flow Logic
 
-### Workflow Agent Predefined Logic (LoopAgent)
-- The workflow agent will be implemented as a **LoopAgent** ([ADK docs](https://google.github.io/adk-docs/agents/workflow-agents/loop-agents/)), which repeatedly executes its sub-agents until the game is over or a maximum number of iterations is reached.
-- **LoopAgent Sub-Agents:**
-  1. **Game State Checker**: Calls the Risk API to check the current game state and determine whose turn it is or if the game is over.
-  2. **Player Turn Dispatcher**: Sends the turn to the correct player agent and waits for their response.
-- The loop terminates when the game state indicates the game is over, or after a max number of iterations (as a safety net).
+### Workflow Agent (Game Master)
+- **FastAPI Service**: Users interact directly via HTTP endpoints
+- **LoopAgent Pattern**: Implements game loop logic for full rounds
+- **Sub-Agents**:
+  1. **Game State Checker**: Calls the Risk API to check current game state
+  2. **Player Turn Dispatcher**: Sends A2A messages to player agents for turns
+- **Full Round Execution**: Ensures every player takes exactly one turn per round
 
-### Stepwise / External Control Mode
-- The workflow agent can also be run in a **stepwise/external control mode**:
-  - The agent exposes an endpoint (e.g., `/play-turn` or `/step`) in its FastAPI app.
-  - When this endpoint is called, the agent executes exactly one player turn (checks game state, dispatches the turn, waits for response, returns result).
-  - The agent then waits for the next external call to proceed.
-  - This allows integration with UIs, test harnesses, or manual control, and is fully supported by the agent SDK architecture.
-  - This is an alternative to the LoopAgent 'run until done' pattern, and can be implemented alongside or instead of it.
+### HTTP Endpoints
+- `POST /start-game` - Start a new game with N players
+- `POST /play-full-round` - Play a complete round where every player takes one turn
+- `GET /game-status` - Get current game status
+- `GET /health` - Health check
 
-### LoopAgent Execution Flow
-1. **Initialize Game**
-   - Start new game via Risk API
+### Full Round Execution Flow
+1. **Start Game**
+   - User sends HTTP request: `POST /start-game {"num_players": 4}`
+   - Workflow agent starts new game via Risk API
    - Configure player agents (up to 6)
-   - Set initial game state
 
-2. **Game Loop (LoopAgent)**
-   - Check game state via Risk API (Game State Checker)
-   - If game is over, end workflow (LoopAgent terminates)
-   - If current player exists, send turn task (Player Turn Dispatcher)
-   - Wait for player response
-   - Continue loop
+2. **Play Full Round**
+   - User sends HTTP request: `POST /play-full-round`
+   - Workflow agent ensures every player takes exactly one turn
+   - For each player:
+     - Check if it's their turn
+     - Send turn task to player agent via A2A
+     - Wait for player response
+     - Record turn result
+   - Return summary of the full round
 
 3. **Player Turn Execution**
-   - Route task to appropriate player agent
-   - Include player_id and persona in A2A request
-   - Wait for completion response
+   - Workflow agent sends A2A message to appropriate player agent
+   - Include player_id and persona in A2A DataPart
+   - Wait for completion response via A2A
    - Handle any errors or timeouts
 
 4. **Game State Management**
@@ -85,152 +80,129 @@ Implement a workflow agent that acts as a game master to orchestrate multi-playe
    - Track player elimination
    - Detect game completion conditions
 
-## 🛠️ Implementation Phases
+## 🛠️ Implementation
 
-### Phase 1: Basic Workflow Agent Structure
-**Goal**: Create a LoopAgent-based workflow agent with direct Risk API communication and basic game monitoring
+### Current Implementation Status
 
-**Components**:
-- Workflow agent implemented as a LoopAgent (ADK)
-- Sub-agents: Game State Checker, Player Turn Dispatcher
-- Direct HTTP client for Risk API communication
-- Basic game loop implementation
-- Error handling and logging
-- **Stepwise/external control endpoint** for single-turn execution
+**✅ Infrastructure Complete:**
+- Multi-agent Docker Compose setup working
+- Configuration management with JSON parsing
+- Health endpoints and service verification
+- Agent card integration tested and working
 
-**Deliverables**:
-- `workflow_agent.py` - Core LoopAgent implementation and stepwise endpoint
-- `risk_api_client.py` - Direct Risk API HTTP client
-- `workflow_config.py` - Configuration management
-- Basic Docker setup for local testing
+**🔄 Next Steps - Full Round Implementation:**
 
-### Phase 2: Player Agent Integration
-**Goal**: Integrate with existing player agents via A2A protocol
+1. **Implement Full Round Logic**
+   - Add `play_full_round()` method to LoopAgent
+   - Ensure every player takes exactly one turn
+   - Track round completion and player turn order
+   - Return comprehensive round summary
 
-**Components**:
-- A2A client integration for player communication
-- Player agent discovery and connection management
-- Task routing and response handling
-- Player agent health monitoring
+2. **Add HTTP Endpoint**
+   - Add `POST /play-full-round` endpoint to workflow agent
+   - Accept optional parameters (timeout, player order, etc.)
+   - Return detailed round results
 
-**Deliverables**:
-- `player_manager.py` - Player agent pool management
-- `a2a_client.py` - A2A communication wrapper
-- Updated workflow agent with player integration
-
-### Phase 3: Multi-Service Architecture
-**Goal**: Deploy multiple player agent services in Cloud Run
-
-**Components**:
-- Separate Cloud Run deployments for each player agent
-- Service discovery and configuration
-- Load balancing and health checks
-- Environment-specific configurations
-
-**Deliverables**:
-- `docker-compose.yml` - Local multi-agent setup
-- Cloud Run deployment scripts
-- Service configuration templates
-
-### Phase 4: Advanced Game Management
-**Goal**: Implement full game orchestration with error handling
-
-**Components**:
-- Complete game flow logic
-- Error recovery and retry mechanisms
-- Game statistics and monitoring
-- Performance optimization
-
-**Deliverables**:
-- Complete workflow agent with full game logic
-- Monitoring and logging infrastructure
-- Performance benchmarks and optimization
-
-## 🐳 Local Development Setup
+3. **Test Full Round Execution**
+   - Test with 2-4 players
+   - Verify each player takes exactly one turn
+   - Test error handling and timeouts
+   - Test game completion scenarios
 
 ### Docker Compose Configuration
 ```yaml
 version: '3.8'
 services:
+  # Workflow Agent (Game Master)
   workflow-agent:
-    build: ./agents/workflow_agent
+    build:
+      context: ./workflow_agent
+      dockerfile: Dockerfile
+    container_name: risk-workflow-agent
+    ports:
+      - "8080:8080"
     environment:
-      - RISK_API_URL=http://risk-api-server:8080
-      - PLAYER_AGENT_URLS=http://player-agent-1:8080,http://player-agent-2:8080
-    depends_on:
-      - risk-api-server
-      - player-agent-1
-      - player-agent-2
+      - AGENT_NAME=RiskWorkflowAgent
+      - RISK_API_URL=https://risk-api-server-xxx.a.run.app
+      - PLAYER_AGENT_URLS=["http://player-agent-1:8080/.well-known/agent.json","http://player-agent-2:8080/.well-known/agent.json","http://player-agent-3:8080/.well-known/agent.json","http://player-agent-4:8080/.well-known/agent.json"]
+    restart: unless-stopped
 
+  # Player Agents (1-4)
   player-agent-1:
-    build: ./agents/player_agent
-    environment:
-      - AGENT_NAME=Player1
-      - MCP_SERVER_URL=http://mcp-server:8080/mcp/stream
+    build:
+      context: ./player_agent
+      dockerfile: Dockerfile
+    container_name: risk-player-agent-1
     ports:
       - "8081:8080"
+    environment:
+      - AGENT_NAME=Player1
+      - MCP_SERVER_URL=https://risk-mcp-server-xxx.a.run.app/mcp/stream
+    restart: unless-stopped
 
   player-agent-2:
-    build: ./agents/player_agent
-    environment:
-      - AGENT_NAME=Player2
-      - MCP_SERVER_URL=http://mcp-server:8080/mcp/stream
+    build:
+      context: ./player_agent
+      dockerfile: Dockerfile
+    container_name: risk-player-agent-2
     ports:
       - "8082:8080"
-
-  mcp-server:
-    build: ./mcp-server
     environment:
-      - RISK_API_BASE_URL=http://risk-api-server:8080
+      - AGENT_NAME=Player2
+      - MCP_SERVER_URL=https://risk-mcp-server-xxx.a.run.app/mcp/stream
+    restart: unless-stopped
+
+  player-agent-3:
+    build:
+      context: ./player_agent
+      dockerfile: Dockerfile
+    container_name: risk-player-agent-3
     ports:
       - "8083:8080"
+    environment:
+      - AGENT_NAME=Player3
+      - MCP_SERVER_URL=https://risk-mcp-server-xxx.a.run.app/mcp/stream
+    restart: unless-stopped
 
-  risk-api-server:
-    image: risk-board-game-server
+  player-agent-4:
+    build:
+      context: ./player_agent
+      dockerfile: Dockerfile
+    container_name: risk-player-agent-4
     ports:
       - "8084:8080"
+    environment:
+      - AGENT_NAME=Player4
+      - MCP_SERVER_URL=https://risk-mcp-server-xxx.a.run.app/mcp/stream
+    restart: unless-stopped
 ```
 
 ### Local Development Commands
 ```bash
-# Start all services locally
-docker-compose up -d
+# Start all agent services locally
+cd risk/agents
+docker compose up -d
 
 # View logs
-docker-compose logs -f workflow-agent
+docker compose logs -f workflow-agent
 
-# Test workflow agent
-curl -X POST http://localhost:8080/execute \
+# Test workflow agent health
+curl http://localhost:8080/health
+
+# Start a new game
+curl -X POST http://localhost:8080/start-game \
   -H "Content-Type: application/json" \
-  -d '{"action": "start_game", "num_players": 2}'
-```
+  -d '{"num_players": 4}'
 
-## ☁️ Cloud Deployment
+# Play a full round
+curl -X POST http://localhost:8080/play-full-round \
+  -H "Content-Type: application/json"
 
-### Player Agent Services
-Each player agent will be deployed as a separate Cloud Run service:
+# Get game status
+curl http://localhost:8080/game-status
 
-```bash
-# Deploy player agent services
-for i in {1..6}; do
-  gcloud run deploy risk-player-agent-$i \
-    --image gcr.io/PROJECT_ID/risk-player-agent \
-    --platform managed \
-    --region europe-west4 \
-    --allow-unauthenticated \
-    --set-env-vars AGENT_NAME=Player$i
-done
-```
-
-### Workflow Agent Service
-```bash
-# Deploy workflow agent
-gcloud run deploy risk-workflow-agent \
-  --image gcr.io/PROJECT_ID/risk-workflow-agent \
-  --platform managed \
-  --region europe-west4 \
-  --allow-unauthenticated \
-  --set-env-vars RISK_API_URL=https://risk-api-server-xxx.a.run.app,PLAYER_AGENT_URLS=https://risk-player-agent-1-xxx.a.run.app,https://risk-player-agent-2-xxx.a.run.app
+# Stop all services
+docker compose down
 ```
 
 ## 🔧 Technical Specifications
@@ -263,93 +235,87 @@ class WorkflowAgentConfig:
     max_iterations: int = 500  # Safety net for infinite loops
 ```
 
-### LoopAgent Structure
-- **Root agent**: LoopAgent
-- **Sub-agents**:
-  - Game State Checker (checks game state, signals loop termination if game is over)
-  - Player Turn Dispatcher (assigns turn to player agent, waits for response)
-
-### Player Agent Startup
-Player agents will receive configuration via A2A DataPart:
+### Full Round Response Format
 ```json
 {
-  "player_id": 1,
-  "persona": "aggressive",
-  "mcp_server_url": "https://risk-mcp-server.a.run.app/mcp/stream"
+  "success": true,
+  "round_number": 1,
+  "players_processed": 4,
+  "round_summary": {
+    "player_1": {
+      "status": "completed",
+      "strategy": "aggressive",
+      "actions": ["attacked Alaska", "defended Alberta"]
+    },
+    "player_2": {
+      "status": "completed", 
+      "strategy": "defensive",
+      "actions": ["defended Ontario", "placed reinforcements"]
+    }
+  },
+  "game_status": "playing",
+  "next_round_ready": true
 }
 ```
-
-### Game State Monitoring
-Workflow agent will use direct Risk API calls to:
-- `GET /game-state` - Check current game state
-- `GET /players` - Get player information and current turn
-- `POST /new-game` - Start new games
-- `GET /game-status` - Check if game is completed
 
 ## 🧪 Testing Strategy
 
 ### Unit Tests
-- Workflow agent logic testing
-- Player agent communication testing
-- Risk API client integration testing
+- Full round execution logic
+- Player turn order tracking
+- Game state management
+- Error handling
 
 ### Integration Tests
-- Full game flow testing
-- Multi-player scenario testing
-- Error handling and recovery testing
+- Complete full round with 2-4 players
+- A2A communication with player agents
+- Game completion scenarios
+- Error recovery
 
 ### Performance Tests
-- Concurrent player agent testing
-- Game completion time benchmarking
+- Round completion time
+- Concurrent round execution
 - Resource usage monitoring
 
 ## 📊 Monitoring and Observability
 
 ### Key Metrics
-- Game completion rate
-- Average turn execution time
-- Player agent response times
+- Full round completion time
+- Individual player turn times
+- Round success rate
 - Error rates and types
 
 ### Logging
-- Workflow agent orchestration logs
-- Player agent communication logs
+- Round start/completion logs
+- Player turn execution logs
+- A2A message flow logs
 - Game state transition logs
 - Error and exception logs
 
 ## 🚀 Success Criteria
 
-### Phase 1 Success
-- [ ] Workflow agent is implemented as a LoopAgent
-- [ ] LoopAgent terminates when game is over or max iterations reached
-- [ ] Workflow agent can start a new game
-- [ ] Workflow agent can monitor game state
-- [ ] Basic game loop implementation
-- [ ] Local Docker setup working
-- [ ] Workflow agent exposes a stepwise/external control endpoint to play a single turn on demand
+### Core Functionality
+- [ ] Workflow agent can start a new game with N players
+- [ ] Workflow agent can play a full round where every player takes exactly one turn
+- [ ] HTTP endpoints working for game control
+- [ ] A2A communication with player agents working
+- [ ] Comprehensive round summary returned
 
-### Phase 2 Success
-- [ ] Workflow agent can communicate with player agents
-- [ ] Turn routing and response handling working
-- [ ] Player agent health monitoring
-- [ ] Error handling for player communication
+### Error Handling
+- [ ] Timeout handling for slow player agents
+- [ ] Error recovery for failed player turns
+- [ ] Game state validation
+- [ ] Proper error messages returned
 
-### Phase 3 Success
-- [ ] Multiple Cloud Run services deployed
-- [ ] Service discovery and configuration working
-- [ ] Load balancing and health checks
-- [ ] Environment-specific configurations
-
-### Phase 4 Success
-- [ ] Complete game orchestration working
-- [ ] Error recovery and retry mechanisms
-- [ ] Game statistics and monitoring
-- [ ] Performance optimization completed
+### Testing
+- [ ] Full round execution with 2-4 players
+- [ ] Game completion scenarios
+- [ ] Error scenarios and recovery
+- [ ] Performance benchmarks
 
 ## 🔄 Future Enhancements
 
 ### Potential Improvements
-- LLM integration for game commentary
 - Advanced player personas and strategies
 - Game replay and analysis features
 - Tournament mode with multiple games
@@ -363,4 +329,4 @@ Workflow agent will use direct Risk API calls to:
 
 ---
 
-**Implementation Priority**: Start with Phase 1 to establish the foundation, then progress through phases based on testing and feedback. 
+**Implementation Priority**: Focus on implementing the full round functionality first, then add error handling and testing. 
