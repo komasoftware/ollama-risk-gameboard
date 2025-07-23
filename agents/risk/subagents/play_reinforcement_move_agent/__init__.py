@@ -5,4 +5,4 @@ This package provides a LinkedIn post generator system with automated review and
 It uses a loop agent for iterative refinement until quality requirements are met.
 """
 
-from .agent import play_move_agent
+from .agent import play_reinforcement_move_agent

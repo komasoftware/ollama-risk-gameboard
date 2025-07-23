@@ -1,16 +1,10 @@
-import datetime
 
-import google.genai
 import os
-from typing import Optional
 
-from google.adk.agents.callback_context import CallbackContext
-from google.genai import types
 from google.adk.agents import Agent
 from google.adk.tools.tool_context import ToolContext
 from risk_api import RiskAPIClient
-from pydantic import BaseModel, Field
-from game_state import GameStateRoot
+from callbacks import after_agent_callback_update_game_state
 
 risk_api_client = RiskAPIClient(os.getenv("RISK_API_BASE_URL"))
 
@@ -39,14 +33,6 @@ def start_new_game(num_players: int, tool_context: ToolContext) -> dict:
 
     return {"status": "success" if success else "error", "players": num_players}
 
-def after_agent_callback(callback_context: CallbackContext) -> Optional[types.Content]:
-    """
-    Update the game state with the latest game state from the Risk API.
-    """
-    state = callback_context.state
-    risk_api_response = risk_api_client.get_game_state()
-    state["game_state"] = GameStateRoot.from_risk_api_response(risk_api_response)
-    return None
 
 new_game_agent = Agent(
     name="new_game_agent",
@@ -56,6 +42,7 @@ new_game_agent = Agent(
 
     When requested, initialize a new game for minimum 2 and maximum 6 of players using the Risk API. 
     You start a new game by calling the start_new_game tool.
+    Make exactly one call to the start_new_game tool if the number of players is between 2 and 6.
 
     If less than 2 players or more than 6 players are requested, report an error and return control to the delegating agent.
     If an error occurs, report it clearly. 
@@ -69,8 +56,7 @@ new_game_agent = Agent(
     """,
     description="You are responsible for starting a new game of Risk.",
     tools=[start_new_game],
-    after_agent_callback=after_agent_callback,
-    # output_schema=NewGameResponse,
+    after_agent_callback=after_agent_callback_update_game_state,
     output_key="new_game_response"
 )
 

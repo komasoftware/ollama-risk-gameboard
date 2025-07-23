@@ -11,11 +11,8 @@ print(f"using {os.getenv('GEMINI_MODEL')}")
 
 from risk.agent import risk_agent
 from utils import call_agent_async, display_state
-from risk_api import RiskAPIClient
-from game_state import GameStateRoot
+from callbacks import update_game_state
 
-risk_api_client = RiskAPIClient(os.getenv("RISK_API_BASE_URL"))
-risk_api_response = risk_api_client.get_game_state()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,9 +29,10 @@ except Exception as e:
 
 initial_state = {
     "user_name": "Koen",
-    "game_state": GameStateRoot.from_risk_api_response(risk_api_response),
     "risk_map_svg": risk_map_svg_content,
 }
+
+update_game_state(initial_state)
 
 
 async def main_async():
