@@ -8,24 +8,31 @@ This project showcases a complete agentic web architecture where AI agents can a
 
 - **Risk Game Server**: Rust-based game engine with REST API
 - **MCP Server**: Protocol bridge exposing game functions as tools
-- **ADK Agent**: Google's Agent Development Kit with Gemini integration
+- **ADK Agents**: Google's Agent Development Kit with Gemini integration and built-in Web UI
 - **A2A Protocol**: Agent-to-agent communication framework
+- **Workflow Agent**: ADK Loop agent orchestrating multi-player games
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   ADK Agent     │    │   MCP Server    │    │  Risk API       │
-│   (Gemini)      │◄──►│   (HTTP/SSE)    │◄──►│  (Rust Server)  │
+│   ADK Web UI    │    │   ADK Loop      │    │   MCP Server    │
+│   (Built-in)    │◄──►│   (Workflow)    │◄──►│   (HTTP/SSE)    │
 │                 │    │                 │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          │                       │                       │
          ▼                       ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   A2A Protocol  │    │   Cloud Run     │    │   Game State    │
-│   (Agent Exec)  │    │   (Deployed)    │    │   (JSON Config) │
+│   User Control  │    │   A2A Protocol  │    │   Risk API      │
+│   (Game Master) │    │   (Agent Exec)  │    │   (Rust Server) │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │                       │
+                                ▼                       ▼
+                       ┌─────────────────┐    ┌─────────────────┐
+                       │   Player Agents │    │   Game State    │
+                       │   (ADK Agents)  │    │   (JSON Config) │
+                       └─────────────────┘    └─────────────────┘
 ```
 
 ## 🚀 Key Components
@@ -51,15 +58,23 @@ This project showcases a complete agentic web architecture where AI agents can a
   - `get_reinforcement_armies` - Get available reinforcements
   - `get_possible_actions` - List valid actions
 
-### 3. **ADK Agent** (`agents/player_agent/`)
+### 3. **ADK Workflow Agent** (`agents/workflow_agent/`)
+- **ADK Loop Agent**: Orchestrates multi-player Risk games
+- **Built-in Web UI**: Users interact through ADK's visual Web UI
+- **Game Orchestration**: Manages game rounds and player turns
+- **A2A Integration**: Communicates with player agents via A2A protocol
+- **Real-time Streaming**: Provides live updates during game play
+
+### 4. **ADK Player Agents** (`agents/player_agent/`)
 - **`agent_player.py`**: Google ADK agent with Gemini integration
 - **Features**:
   - MCP toolset integration over HTTP/SSE
   - Strategic Risk gameplay logic
   - Session management and state tracking
   - A2A protocol compatibility
+  - Individual player strategies and personas
 
-### 4. **Test Data Generator** (`generate_testdata.py`)
+### 5. **Test Data Generator** (`generate_testdata.py`)
 - Automated game scenario generation
 - Captures meaningful game states for testing
 - Tracks card trading, conquests, continent control
@@ -68,10 +83,17 @@ This project showcases a complete agentic web architecture where AI agents can a
 ## 🛠️ Technology Stack
 
 ### Core Technologies
-- **Google ADK**: Agent Development Kit for LLM-powered agents
+- **Google ADK**: Agent Development Kit with built-in Web UI and Loop agents
 - **MCP (Model Context Protocol)**: Standardized tool calling protocol
 - **A2A Protocol**: Agent-to-agent communication framework
 - **Gemini 2.5 Flash Lite**: Advanced LLM for game strategy
+
+### ADK Features
+- **Built-in Web UI**: Visual interface for development and user interaction
+- **Loop Agents**: Orchestration for complex workflows and game rounds
+- **Bidirectional Streaming**: Real-time audio/video communication
+- **Integrated Debugging**: Step-by-step execution inspection
+- **Multi-Agent Support**: Hierarchical agent composition and delegation
 
 ### Infrastructure
 - **Cloud Run**: Serverless deployment platform
@@ -104,6 +126,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r agents/player_agent/requirements.txt
+pip install -r agents/workflow_agent/requirements.txt
 pip install -r mcp-server/requirements.txt
 ```
 
@@ -124,7 +147,13 @@ cd mcp-server
 python risk_mcp.py
 ```
 
-#### Run ADK Agent
+#### Run ADK Workflow Agent
+```bash
+cd agents/workflow_agent
+adk web  # Launches ADK's built-in Web UI
+```
+
+#### Run Player Agents
 ```bash
 cd agents/player_agent
 python agent_player.py
@@ -142,8 +171,11 @@ python generate_testdata.py
 # Build MCP server
 docker build -t risk-mcp-server mcp-server/
 
-# Build ADK agent
-docker build -t risk-adk-agent agents/player_agent/
+# Build ADK workflow agent
+docker build -t risk-workflow-agent agents/workflow_agent/
+
+# Build ADK player agents
+docker build -t risk-player-agent agents/player_agent/
 
 # Build main application
 docker build -t risk-platform .
@@ -158,9 +190,16 @@ gcloud run deploy risk-mcp-server \
   --region europe-west4 \
   --allow-unauthenticated
 
-# Deploy ADK agent
-gcloud run deploy risk-adk-agent \
-  --image risk-adk-agent \
+# Deploy ADK workflow agent
+gcloud run deploy risk-workflow-agent \
+  --image risk-workflow-agent \
+  --platform managed \
+  --region europe-west4 \
+  --allow-unauthenticated
+
+# Deploy player agents
+gcloud run deploy risk-player-agent \
+  --image risk-player-agent \
   --platform managed \
   --region europe-west4 \
   --allow-unauthenticated
@@ -168,12 +207,13 @@ gcloud run deploy risk-adk-agent \
 
 ## 🎮 Game Flow
 
-1. **Initialization**: Agent connects to MCP server via HTTP/SSE
-2. **Game State**: Agent retrieves current game state
-3. **Strategy**: Gemini analyzes game state and formulates strategy
-4. **Action Selection**: Agent chooses optimal actions using MCP tools
-5. **Execution**: Actions are executed through Risk API
-6. **Iteration**: Process repeats until game completion
+1. **User Interaction**: User accesses ADK's built-in Web UI
+2. **Game Initialization**: Workflow agent starts new game via Risk API
+3. **Player Assignment**: Workflow agent configures player agents via A2A
+4. **Round Orchestration**: Loop agent manages complete game rounds
+5. **Turn Execution**: Each player agent takes turns via A2A communication
+6. **Real-time Updates**: Web UI shows live game progress and state
+7. **Game Completion**: Workflow agent detects and reports game end
 
 ## 🔧 Development
 
@@ -181,10 +221,14 @@ gcloud run deploy risk-adk-agent \
 ```
 risk/
 ├── agents/
+│   ├── workflow_agent/
+│   │   ├── loop_agent.py        # ADK Loop agent implementation
+│   │   ├── requirements.txt     # ADK dependencies
+│   │   └── Dockerfile          # Workflow agent containerization
 │   └── player_agent/
-│       ├── agent_player.py      # ADK agent implementation
+│       ├── agent_player.py      # ADK player agent implementation
 │       ├── requirements.txt     # Python dependencies
-│       └── Dockerfile          # Agent containerization
+│       └── Dockerfile          # Player agent containerization
 ├── mcp-server/
 │   ├── risk_mcp.py             # MCP server implementation
 │   ├── risk_api.py             # Risk API client
@@ -198,6 +242,18 @@ risk/
 
 ### Key Design Patterns
 
+#### ADK Loop Agent Setup
+```python
+from google.adk.agents import LoopAgent
+
+workflow_agent = LoopAgent(
+    model="gemini-2.5-flash-lite-preview-06-17",
+    name="risk_workflow_agent",
+    description="Orchestrates multi-player Risk games",
+    instruction="You are a Risk game master that coordinates rounds..."
+)
+```
+
 #### MCP Tool Integration
 ```python
 @server.tool(
@@ -207,16 +263,6 @@ risk/
 def attack(player_id: int, from_territory: str, to_territory: str, 
            num_armies: int, num_dice: int, repeat: bool = False) -> Dict[str, Any]:
     # Tool implementation
-```
-
-#### ADK Agent Setup
-```python
-self.agent = LlmAgent(
-    model=Gemini(model="gemini-2.5-flash-lite-preview-06-17"),
-    name=self.name,
-    instruction="You are a Risk game player agent..."
-)
-self.agent.tools = [self.toolset]
 ```
 
 #### A2A Protocol Integration
@@ -244,6 +290,10 @@ python generate_testdata.py
 
 # Test specific scenarios
 python -m pytest tests/ -v
+
+# Test ADK workflow agent
+cd agents/workflow_agent
+adk eval  # Run ADK's built-in evaluation
 ```
 
 ## 🔍 Monitoring & Logging
@@ -258,6 +308,13 @@ python -m pytest tests/ -v
 - Action execution success rates
 - Agent decision-making time
 - MCP tool call performance
+- ADK Loop agent orchestration efficiency
+
+### ADK Web UI Features
+- **Real-time Monitoring**: Live game state and agent activity
+- **Step-by-step Debugging**: Inspect agent execution flow
+- **Event Inspection**: View A2A messages and responses
+- **State Management**: Monitor game state transitions
 
 ## 🤝 Contributing
 
@@ -273,6 +330,7 @@ python -m pytest tests/ -v
 - Ensure ADK agent integration works
 - Add comprehensive logging
 - Update documentation for new features
+- Test with ADK's built-in evaluation tools
 
 ## 📚 Resources
 
@@ -293,7 +351,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🙏 Acknowledgments
 
-- Google ADK team for the agent development framework
+- Google ADK team for the agent development framework and built-in UI
 - MCP community for the protocol specification
 - Risk game community for inspiration and testing
 
