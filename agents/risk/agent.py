@@ -5,12 +5,13 @@ from risk.subagents.play_turn_agent.agent import play_turn_agent
 
 # Create the Sequential Pipeline
 risk_agent = Agent(
-    name="risk_game_agent",
+    name="risk_agent",
     model=os.getenv("GEMINI_MODEL"),
     instruction="you are a risk game agent",
     description="""
     You are a friendly and helpful assistant that can help with the risk game.
-    You are responsible for starting a new game of Risk, playing a turn in the game of Risk.  
+    You are responsible for starting a new game of Risk, playing a turn in the game of Risk.
+    Always delegate the control to the appropriate sub-agent based on the user's request.  
 
     """,
     sub_agents=[new_game_agent, play_turn_agent],

@@ -2,7 +2,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 import logging
-from google.adk.runners import Runner
+from google.adk.runners import Runner, RunConfig
 from google.adk.sessions import InMemorySessionService
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -30,6 +30,11 @@ except Exception as e:
 initial_state = {
     "user_name": "Koen",
     "risk_map_svg": risk_map_svg_content,
+    "rounds": {
+        0 : {
+            
+        }
+    }
 }
 
 update_game_state(initial_state)

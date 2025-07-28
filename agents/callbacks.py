@@ -18,11 +18,13 @@ def update_game_state(state: dict) -> None:
     game_state_obj = GameStateRoot.from_risk_api_response(risk_api_response)
     state["game_state"] = game_state_obj
     state["current_player_name"] = game_state_obj.get_current_player_name()
+    state["reinforcement_armies"] = game_state_obj.get_reinforcement_armies()
     state["current_player_id"] = game_state_obj.get_current_player_id() + 1  # 1-based for prompt
     round_num = game_state_obj.get_current_game_round()
     state["current_game_round"] = f"round {round_num}" if round_num > 0 else "the first round"
     state["current_turn_phase"] = game_state_obj.get_current_turn_phase()
     state["possible_actions_str"] = game_state_obj.get_possible_actions_str()
+    state["current_player_territories_str"] = game_state_obj.get_current_player_territories_str()
     state["adversaries_territories_str"] = game_state_obj.get_adversaries_territories_str()
 
 

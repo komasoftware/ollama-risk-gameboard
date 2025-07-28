@@ -1,5 +1,16 @@
+import logging
+from google.adk.agents import RunConfig
+from google.adk.agents.run_config import StreamingMode
 from google.genai import types
+from game_state import GameStateRoot
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+run_config = RunConfig(
+    streaming_mode=StreamingMode.NONE,
+    max_llm_calls=100  # <-- Set your desired limit here
+)
 
 # ANSI color codes for terminal output
 class Colors:
@@ -38,69 +49,29 @@ async def display_state(
         )
 
         # Format the output with clear sections
-        print(f"\n{'-' * 10} {label} {'-' * 10}")
+        logger.info(f"\n{'-' * 10} {label} {'-' * 10}")
 
         # Handle the user name
         user_name = session.state.get("user_name", "Unknown")
-        game_state = session.state.get("game_state", {})
+        game_state: GameStateRoot = session.state.get("game_state")
 
-        print(f"👤 User: {user_name}")
-        # print(f"🗺️ Territories: {len(game_state['territories'])} territories")
+        logger.info(f"🧑‍💼 User: {user_name}")
+        logger.info(f"🎲 Player: {game_state.get_current_player_name()}")
+        logger.info(f"🔁 Round: {game_state.get_current_game_round()}")
+        logger.info(f"⏳ Phase: {game_state.get_current_turn_phase()}")
+        logger.info(
+            f"🗺️ Territories: \n{game_state.get_current_player_territories_str()}"
+        )
 
-        # # Handle reminders
-        # reminders = session.state.get("reminders", [])
-        # if reminders:
-        #     print("📝 Reminders:")
-        #     for idx, reminder in enumerate(reminders, 1):
-        #         print(f"  {idx}. {reminder}")
-        # else:
-        #     print("📝 Reminders: None")
-
-        print("-" * (22 + len(label)))
+        logger.info("-" * (22 + len(label)))
     except Exception as e:
-        print(f"Error displaying state: {e}")
+        logger.info(f"Error displaying state: {e}")
 
 
 async def process_agent_response(event):
     """Process and display agent response events."""
     # Log basic event info
-    print(f"Event ID: {event.id}, Author: {event.author}")
-
-    # Print all parts in event.content.parts for full visibility
-    if event.content and hasattr(event.content, 'parts') and event.content.parts:
-        print("Full event.content.parts:")
-        for idx, part in enumerate(event.content.parts):
-            print(f"  Part {idx}: type={type(part)}, value={part}")
-            if hasattr(part, "text"):
-                print(f"    Text: {getattr(part, 'text', None)}")
-            if hasattr(part, "function_call"):
-                print(f"    Function Call: {getattr(part, 'function_call', None)}")
-            if hasattr(part, "tool_response"):
-                print(f"    Tool Response: {getattr(part, 'tool_response', None)}")
-
-    # Check for specific parts first
-    has_specific_part = False
-    if event.content and event.content.parts:
-        for part in event.content.parts:
-            if hasattr(part, "executable_code") and part.executable_code:
-                # Access the actual code string via .code
-                print(
-                    f"  Debug: Agent generated code:\n```python\n{part.executable_code.code}\n```"
-                )
-                has_specific_part = True
-            elif hasattr(part, "code_execution_result") and part.code_execution_result:
-                # Access outcome and output correctly
-                print(
-                    f"  Debug: Code Execution Result: {part.code_execution_result.outcome} - Output:\n{part.code_execution_result.output}"
-                )
-                has_specific_part = True
-            elif hasattr(part, "tool_response") and part.tool_response:
-                # Print tool response information
-                print(f"  Tool Response: {part.tool_response.output}")
-                has_specific_part = True
-            # Also print any text parts found in any event for debugging
-            elif hasattr(part, "text") and part.text and not part.text.isspace():
-                print(f"  Text: '{part.text.strip()}'")
+    logger.info(f"Event ID: {event.id}, Author: {event.author}")
 
     # Check for final response after specific parts
     final_response = None
@@ -113,15 +84,15 @@ async def process_agent_response(event):
         ):
             final_response = event.content.parts[0].text.strip()
             # Use colors and formatting to make the final response stand out
-            print(
+            logger.info(
                 f"\n{Colors.BG_BLUE}{Colors.WHITE}{Colors.BOLD}╔══ AGENT RESPONSE ═════════════════════════════════════════{Colors.RESET}"
             )
-            print(f"{Colors.CYAN}{Colors.BOLD}{final_response}{Colors.RESET}")
-            print(
+            logger.info(f"{Colors.CYAN}{Colors.BOLD}{final_response}{Colors.RESET}")
+            logger.info(
                 f"{Colors.BG_BLUE}{Colors.WHITE}{Colors.BOLD}╚═════════════════════════════════════════════════════════════{Colors.RESET}\n"
             )
         else:
-            print(
+            logger.info(
                 f"\n{Colors.BG_RED}{Colors.WHITE}{Colors.BOLD}==> Final Agent Response: [No text content in final event]{Colors.RESET}\n"
             )
 
@@ -131,7 +102,7 @@ async def process_agent_response(event):
 async def call_agent_async(runner, user_id, session_id, query):
     """Call the agent asynchronously with the user's query."""
     content = types.Content(role="user", parts=[types.Part(text=query)])
-    print(
+    logger.info(
         f"\n{Colors.BG_GREEN}{Colors.BLACK}{Colors.BOLD}--- Running Query: {query} ---{Colors.RESET}"
     )
     final_response_text = None
@@ -147,14 +118,14 @@ async def call_agent_async(runner, user_id, session_id, query):
 
     try:
         async for event in runner.run_async(
-            user_id=user_id, session_id=session_id, new_message=content
+            user_id=user_id, session_id=session_id, new_message=content, run_config=run_config
         ):
             # Process each event and get the final response if available
             response = await process_agent_response(event)
             if response:
                 final_response_text = response
     except Exception as e:
-        print(f"Error during agent call: {e}")
+        logger.info(f"Error during agent call: {e}")
 
     # Display state after processing the message
     await display_state(

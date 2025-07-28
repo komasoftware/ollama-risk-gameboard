@@ -1,5 +1,6 @@
 from typing import List, Dict, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from abc import ABC, abstractmethod
 
 class Territory(BaseModel):
     name: str
@@ -24,30 +25,51 @@ class Player(BaseModel):
     army_supply: int
     total_armies: int
 
-class FortifyAction(BaseModel):
+class BaseAction(BaseModel, ABC):
+    @abstractmethod
+    def format(self) -> str:
+        pass
+
+class FortifyAction(BaseAction):
     from_: str = Field(..., alias='from')
     to: str
     max_armies: int
 
-class ReinforceAction(BaseModel):
+    def format(self) -> str:
+        return f"Fortify from {self.from_} to {self.to} with up to {self.max_armies} armies"
+
+class ReinforceAction(BaseAction):
     territory: str
     max_armies: int
 
-class AttackAction(BaseModel):
+    def format(self) -> str:
+        return f"Reinforce {self.territory} with up to {self.max_armies} armies"
+
+class AttackAction(BaseAction):
     from_: str = Field(..., alias='from')
     to: str
     max_dice: int
 
-class MoveArmiesAction(BaseModel):
+    def format(self) -> str:
+        return f"Attack from {self.from_} to {self.to} with up to {self.max_dice} dice"
+
+class MoveArmiesAction(BaseAction):
     from_: str = Field(..., alias='from')
     to: str
     max_armies: int
 
-class TradeCardsAction(BaseModel):
+    def format(self) -> str:
+        return f"Move up to {self.max_armies} armies from {self.from_} to {self.to}"
+
+class TradeCardsAction(BaseAction):
     card_indices: List[int]
 
-class EndPhaseAction(BaseModel):
-    pass
+    def format(self) -> str:
+        return f"Trade cards at indices {self.card_indices}"
+
+class EndPhaseAction(BaseAction):
+    def format(self) -> str:
+        return "End your turn"
 
 class PossibleAction(BaseModel):
     Fortify: Optional[FortifyAction] = None
@@ -59,6 +81,11 @@ class PossibleAction(BaseModel):
     # Add other possible action types as needed
 
 PossibleActionType = Union[PossibleAction, dict, str]
+
+class ConquerProb(BaseModel):
+    from_: str = Field(..., alias='from')
+    to: str
+    probability: float
 
 class GameState(BaseModel):
     current_player: str
@@ -72,7 +99,18 @@ class GameState(BaseModel):
     possible_actions: List[Union[PossibleAction, dict, str]]
     players: List[Player]
     board: Board
-    conquer_probs: List[List[Union[str, float]]]  # Or use a custom model/validator
+    conquer_probs: List[ConquerProb]
+
+    @field_validator('conquer_probs', mode='before')
+    @classmethod
+    def parse_conquer_probs(cls, v):
+        # v is a list of [from, to, probability]
+        if isinstance(v, list) and v and isinstance(v[0], list):
+            return [
+                {"from": item[0], "to": item[1], "probability": item[2]}
+                for item in v
+            ]
+        return v
 
 class GameStateRoot(BaseModel):
     game_state: GameState
@@ -85,6 +123,27 @@ class GameStateRoot(BaseModel):
         Handles nested model conversion as needed.
         """
         return cls.model_validate(response)
+
+    def get_current_player(self) -> str:
+        return self.game_state.current_player
+
+    def get_current_turn(self) -> int:
+        return self.game_state.current_turn
+
+    def get_round(self) -> int:
+        return self.game_state.round
+
+    def get_turn_phase(self) -> str:
+        return self.game_state.turn_phase
+
+    def get_conquered_territory(self) -> bool:
+        return self.game_state.conquered_territory
+
+    def get_reinforcement_armies(self) -> int:
+        return self.game_state.reinforcement_armies
+
+    def get_initial_reinforcement_armies(self) -> int:
+        return self.game_state.initial_reinforcement_armies
 
     def get_current_player(self):
         """
@@ -132,33 +191,50 @@ class GameStateRoot(BaseModel):
         """
         Returns a readable, multi-line string describing all possible actions for the current turn.
         """
-        actions = self.get_possible_actions()
         lines = []
-        for action in actions:
+        for action in self.game_state.possible_actions:
             if isinstance(action, str):
                 if action.lower() == "endphase":
-                    lines.append("* End phase (finish your turn)")
+                    lines.append("End phase (finish your turn)")
                 else:
-                    lines.append(f"* {action}")
+                    lines.append(str(action))
             elif isinstance(action, dict):
-                key, value = next(iter(action.items()))
-                k = key.lower()
-                if k == "fortify":
-                    lines.append(f"* Fortify: move armies from {value['from']} to {value['to']} (max {value['max_armies']})")
-                elif k == "reinforce":
-                    lines.append(f"* Reinforce: add up to {value['max_armies']} armies to {value['territory']}")
-                elif k == "attack":
-                    lines.append(f"* Attack: from {value['from']} to {value['to']} (max {value['max_armies']} armies, max dice: {value['max_dice']})")
-                elif k == "movearmies":
-                    lines.append(f"* Move armies: from {value['from']} to {value['to']} (max {value['max_armies']})")
-                elif k == "tradecards":
-                    lines.append(f"* Trade cards: indices {value['card_indices']}")
-                elif k == "endphase":
-                    lines.append("* End phase (finish your turn)")
+                # Try to detect which action type is present in the dict
+                for key, value in action.items():
+                    if hasattr(value, 'format'):
+                        lines.append(value.format())
+                    elif isinstance(value, dict):
+                        # Try to reconstruct the action type from dict
+                        # e.g., Attack: {from, to, max_dice}
+                        if key.lower() == "attack":
+                            lines.append(f"Attack from {value.get('from')} to {value.get('to')} with up to {value.get('max_dice')} dice")
+                        elif key.lower() == "reinforce":
+                            lines.append(f"Reinforce {value.get('territory')} with up to {value.get('max_armies')} armies")
+                        elif key.lower() == "fortify":
+                            lines.append(f"Fortify from {value.get('from')} to {value.get('to')} with up to {value.get('max_armies')} armies")
+                        elif key.lower() == "movearmies":
+                            lines.append(f"Move up to {value.get('max_armies')} armies from {value.get('from')} to {value.get('to')}")
+                        elif key.lower() == "tradecards":
+                            lines.append(f"Trade cards at indices {value.get('card_indices')}")
+                        elif key.lower() == "endphase":
+                            lines.append("End phase (finish your turn)")
+                        else:
+                            lines.append(f"Unknown action: {key}={value}")
+                    else:
+                        lines.append(f"Unknown action: {key}={value}")
+            elif hasattr(action, 'format'):
+                lines.append(action.format())
+            elif hasattr(action, '__dict__'):
+                # Try to find the first non-None field and call its format
+                for field in ['Fortify', 'Reinforce', 'Attack', 'MoveArmies', 'TradeCards', 'EndPhase']:
+                    value = getattr(action, field, None)
+                    if value is not None and hasattr(value, 'format'):
+                        lines.append(value.format())
+                        break
                 else:
-                    lines.append(f"* {key}: {value}")
+                    lines.append("Unknown action")
             else:
-                lines.append(f"* Unknown action: {action}")
+                lines.append("Unknown action")
         return '\n'.join(lines)
 
     def get_adversaries_territories(self) -> dict:
@@ -228,4 +304,7 @@ class GameStateRoot(BaseModel):
         Returns the current game round.
         """
         return self.game_state.round
+    
+    def get_current_reinforcement_armies(self) -> int:
+        return self.game_state.reinforcement_armies
     
